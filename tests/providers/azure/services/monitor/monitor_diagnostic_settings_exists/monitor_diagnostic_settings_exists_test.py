@@ -1,25 +1,30 @@
 from unittest import mock
 
 from tests.providers.azure.azure_fixtures import (
+    AZURE_SUBSCRIPTION_DISPLAY,
     AZURE_SUBSCRIPTION_ID,
+    AZURE_SUBSCRIPTION_NAME,
     set_mocked_azure_provider,
 )
 
 
 class Test_monitor_diagnostic_settings_exists:
-
     def test_monitor_diagnostic_settings_exists_no_subscriptions(
         self,
     ):
         monitor_client = mock.MagicMock
+        monitor_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         monitor_client.diagnostics_settings = {}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.monitor.monitor_diagnostic_settings_exists.monitor_diagnostic_settings_exists.monitor_client",
-            new=monitor_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.monitor.monitor_diagnostic_settings_exists.monitor_diagnostic_settings_exists.monitor_client",
+                new=monitor_client,
+            ),
         ):
             from prowler.providers.azure.services.monitor.monitor_diagnostic_settings_exists.monitor_diagnostic_settings_exists import (
                 monitor_diagnostic_settings_exists,
@@ -32,12 +37,16 @@ class Test_monitor_diagnostic_settings_exists:
     def test_no_diagnostic_settings(self):
         monitor_client = mock.MagicMock
         monitor_client.diagnostics_settings = {AZURE_SUBSCRIPTION_ID: []}
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.monitor.monitor_diagnostic_settings_exists.monitor_diagnostic_settings_exists.monitor_client",
-            new=monitor_client,
+        monitor_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.monitor.monitor_diagnostic_settings_exists.monitor_diagnostic_settings_exists.monitor_client",
+                new=monitor_client,
+            ),
         ):
             from prowler.providers.azure.services.monitor.monitor_diagnostic_settings_exists.monitor_diagnostic_settings_exists import (
                 monitor_diagnostic_settings_exists,
@@ -48,28 +57,38 @@ class Test_monitor_diagnostic_settings_exists:
             assert len(result) == 1
             assert result[0].subscription == AZURE_SUBSCRIPTION_ID
             assert result[0].status == "FAIL"
+            assert result[0].resource_name == AZURE_SUBSCRIPTION_ID
+            assert result[0].resource_id == f"/subscriptions/{AZURE_SUBSCRIPTION_ID}"
             assert (
                 result[0].status_extended
-                == f"No diagnostic settings found in subscription {AZURE_SUBSCRIPTION_ID}."
+                == f"No diagnostic settings found in subscription {AZURE_SUBSCRIPTION_DISPLAY}."
             )
 
     def test_diagnostic_settings_configured(self):
         monitor_client = mock.MagicMock
+        monitor_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         storage_client = mock.MagicMock
+        storage_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.monitor.monitor_diagnostic_settings_exists.monitor_diagnostic_settings_exists.monitor_client",
-            new=monitor_client,
-        ):
-            with mock.patch(
+        with (
+            mock.patch(
                 "prowler.providers.common.provider.Provider.get_global_provider",
                 return_value=set_mocked_azure_provider(),
-            ), mock.patch(
+            ),
+            mock.patch(
                 "prowler.providers.azure.services.monitor.monitor_diagnostic_settings_exists.monitor_diagnostic_settings_exists.monitor_client",
                 new=monitor_client,
+            ),
+        ):
+            with (
+                mock.patch(
+                    "prowler.providers.common.provider.Provider.get_global_provider",
+                    return_value=set_mocked_azure_provider(),
+                ),
+                mock.patch(
+                    "prowler.providers.azure.services.monitor.monitor_diagnostic_settings_exists.monitor_diagnostic_settings_exists.monitor_client",
+                    new=monitor_client,
+                ),
             ):
                 from prowler.providers.azure.services.monitor.monitor_diagnostic_settings_exists.monitor_diagnostic_settings_exists import (
                     monitor_diagnostic_settings_exists,
@@ -79,6 +98,21 @@ class Test_monitor_diagnostic_settings_exists:
                 )
                 from prowler.providers.azure.services.storage.storage_service import (
                     Account,
+                    BlobProperties,
+                    DeleteRetentionPolicy,
+                    NetworkRuleSet,
+                )
+
+                # Create a valid BlobProperties instance
+                valid_blob_properties = BlobProperties(
+                    id="id",
+                    name="name",
+                    type="type",
+                    default_service_version="default_service_version",
+                    container_delete_retention_policy=DeleteRetentionPolicy(
+                        enabled=False, days=0
+                    ),
+                    versioning_enabled=True,
                 )
 
                 monitor_client.diagnostics_settings = {
@@ -126,51 +160,46 @@ class Test_monitor_diagnostic_settings_exists:
                             name="storageaccountname1",
                             resouce_group_name="rg",
                             enable_https_traffic_only=True,
-                            infrastructure_encryption="Enabled",
+                            infrastructure_encryption=True,
                             allow_blob_public_access=True,
-                            network_rule_set="AllowAll",
+                            network_rule_set=NetworkRuleSet(
+                                bypass="AzureServices", default_action="Allow"
+                            ),
                             encryption_type="Microsoft.CustomerManagedKeyVault",
                             minimum_tls_version="TLS1_2",
                             private_endpoint_connections=[],
-                            key_expiration_period_in_days=365,
+                            key_expiration_period_in_days="365",
                             location="euwest",
-                            blob_properties=mock.MagicMock(
-                                id="id",
-                                name="name",
-                                type="type",
-                                default_service_version="default_service_version",
-                                container_delete_retention_policy="container_delete_retention_policy",
-                            ),
+                            blob_properties=valid_blob_properties,
                         ),
                         Account(
                             id="/subscriptions/1224a5-123a-123a-123a-1234567890ab/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/storageaccountname2",
                             name="storageaccountname2",
                             resouce_group_name="rg",
                             enable_https_traffic_only=False,
-                            infrastructure_encryption="Enabled",
+                            infrastructure_encryption=True,
                             allow_blob_public_access=False,
-                            network_rule_set="AllowAll",
+                            network_rule_set=NetworkRuleSet(
+                                bypass="AzureServices", default_action="Allow"
+                            ),
                             encryption_type="Microsoft.Storage",
                             minimum_tls_version="TLS1_2",
                             private_endpoint_connections=[],
-                            key_expiration_period_in_days=365,
+                            key_expiration_period_in_days="365",
                             location="euwest",
-                            blob_properties=mock.MagicMock(
-                                id="id",
-                                name="name",
-                                type="type",
-                                default_service_version="default_service_version",
-                                container_delete_retention_policy="container_delete_retention_policy",
-                            ),
+                            blob_properties=valid_blob_properties,
                         ),
                     ]
                 }
                 check = monitor_diagnostic_settings_exists()
                 result = check.execute()
+                # Now returns only one finding per subscription (first diagnostic setting found)
                 assert len(result) == 1
                 assert result[0].subscription == AZURE_SUBSCRIPTION_ID
                 assert result[0].status == "PASS"
+                assert result[0].resource_name == "name"
+                assert result[0].resource_id == "id"
                 assert (
                     result[0].status_extended
-                    == f"Diagnostic settings found in subscription {AZURE_SUBSCRIPTION_ID}."
+                    == f"Diagnostic setting name found in subscription {AZURE_SUBSCRIPTION_DISPLAY}."
                 )

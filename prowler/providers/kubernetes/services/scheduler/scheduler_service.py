@@ -4,24 +4,29 @@ from prowler.providers.kubernetes.lib.service.service import KubernetesService
 from prowler.providers.kubernetes.services.core.core_client import core_client
 
 
-################## Scheduler ##################
 class Scheduler(KubernetesService):
     def __init__(self, provider: KubernetesProvider):
         super().__init__(provider)
         self.client = core_client
 
-        self.scheduler_pods = self.__get_scheduler_pods__()
+        self.scheduler_pods = self._get_scheduler_pods()
 
-    def __get_scheduler_pods__(self):
+    def _get_scheduler_pods(self):
+        """Collect the `kube-scheduler` pods from the `kube-system` namespace.
+
+        Returns:
+            list: Matching pods. Any pods collected before an error are kept, so
+            the checks always receive an iterable instead of `None`.
+        """
+        scheduler_pods = []
         try:
-            scheduler_pods = []
             for pod in self.client.pods.values():
                 if pod.namespace == "kube-system" and pod.name.startswith(
                     "kube-scheduler"
                 ):
                     scheduler_pods.append(pod)
-            return scheduler_pods
         except Exception as error:
             logger.error(
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
+        return scheduler_pods

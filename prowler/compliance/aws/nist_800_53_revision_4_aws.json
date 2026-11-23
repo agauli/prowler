@@ -1,5 +1,6 @@
 {
   "Framework": "NIST-800-53-Revision-4",
+  "Name": "National Institute of Standards and Technology (NIST) 800-53 Revision 4",
   "Version": "",
   "Provider": "AWS",
   "Description": "NIST 800-53 is a regulatory standard that defines the minimum baseline of security controls for all U.S. federal information systems except those related to national security. The controls defined in this standard are customizable and address a diverse set of security and privacy requirements.",
@@ -20,9 +21,26 @@
         "guardduty_is_enabled",
         "iam_password_policy_reuse_24",
         "iam_rotate_access_key_90_days",
+        "iam_role_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_sagemaker",
         "iam_user_accesskey_unused",
         "iam_user_console_access_unused",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -38,8 +56,43 @@
         }
       ],
       "Checks": [
+        "iam_role_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_sagemaker",
         "iam_user_accesskey_unused",
         "iam_user_console_access_unused"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "iam_user_accesskey_unused",
+          "ConfigKey": "max_unused_access_keys_days",
+          "Operator": "lte",
+          "Value": 90
+        },
+        {
+          "Check": "iam_user_console_access_unused",
+          "ConfigKey": "max_console_access_days",
+          "Operator": "lte",
+          "Value": 90
+        },
+        {
+          "Check": "iam_user_access_not_stale_to_bedrock",
+          "ConfigKey": "max_unused_bedrock_access_days",
+          "Operator": "lte",
+          "Value": 90
+        },
+        {
+          "Check": "iam_role_access_not_stale_to_bedrock",
+          "ConfigKey": "max_unused_bedrock_access_days",
+          "Operator": "lte",
+          "Value": 90
+        },
+        {
+          "Check": "iam_user_access_not_stale_to_sagemaker",
+          "ConfigKey": "max_unused_sagemaker_access_days",
+          "Operator": "lte",
+          "Value": 90
+        }
       ]
     },
     {
@@ -56,7 +109,6 @@
       ],
       "Checks": [
         "cloudtrail_multi_region_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudtrail_cloudwatch_logging_enabled",
         "cloudwatch_changes_to_network_acls_alarm_configured",
         "cloudwatch_changes_to_network_gateways_alarm_configured",
@@ -66,6 +118,20 @@
         "rds_instance_integration_cloudwatch_logs",
         "redshift_cluster_audit_logging",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -83,6 +149,20 @@
       "Checks": [
         "guardduty_is_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -109,12 +189,29 @@
         "iam_root_mfa_enabled",
         "iam_no_root_access_key",
         "iam_rotate_access_key_90_days",
+        "iam_role_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_sagemaker",
         "iam_user_accesskey_unused",
         "iam_user_console_access_unused",
         "rds_instance_integration_cloudwatch_logs",
         "redshift_cluster_audit_logging",
         "s3_bucket_server_access_logging_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -141,8 +238,7 @@
         "redshift_cluster_public_access",
         "sagemaker_notebook_instance_without_direct_internet_access_configured",
         "s3_bucket_public_access",
-        "s3_bucket_policy_public_write_access",
-        "s3_bucket_public_access"
+        "s3_bucket_policy_public_write_access"
       ]
     },
     {
@@ -168,12 +264,10 @@
         "redshift_cluster_public_access",
         "s3_bucket_public_access",
         "s3_bucket_policy_public_write_access",
-        "s3_bucket_public_access",
         "sagemaker_notebook_instance_without_direct_internet_access_configured",
         "ec2_securitygroup_default_restrict_traffic",
         "ec2_networkacl_allow_ingress_any_port",
-        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22",
-        "ec2_networkacl_allow_ingress_any_port"
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22"
       ]
     },
     {
@@ -221,6 +315,8 @@
         }
       ],
       "Checks": [
+        "iam_inline_policy_no_wildcard_marketplace_subscribe",
+        "iam_policy_no_wildcard_marketplace_subscribe",
         "ec2_ebs_public_snapshot",
         "ec2_instance_public_ip",
         "ec2_instance_imdsv2_enabled",
@@ -229,6 +325,9 @@
         "iam_customer_attached_policy_no_administrative_privileges",
         "iam_inline_policy_no_administrative_privileges",
         "iam_no_root_access_key",
+        "iam_role_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_sagemaker",
         "iam_user_accesskey_unused",
         "iam_user_console_access_unused",
         "awslambda_function_url_public",
@@ -237,7 +336,6 @@
         "redshift_cluster_public_access",
         "s3_bucket_public_access",
         "s3_bucket_policy_public_write_access",
-        "s3_bucket_public_access",
         "sagemaker_notebook_instance_without_direct_internet_access_configured"
       ]
     },
@@ -255,6 +353,20 @@
       "Checks": [
         "guardduty_is_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -308,7 +420,6 @@
         "redshift_cluster_public_access",
         "s3_bucket_public_access",
         "s3_bucket_policy_public_write_access",
-        "s3_bucket_public_access",
         "sagemaker_notebook_instance_without_direct_internet_access_configured"
       ]
     },
@@ -328,7 +439,6 @@
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudtrail_cloudwatch_logging_enabled",
         "elbv2_logging_enabled",
         "elb_logging_enabled",
@@ -354,7 +464,6 @@
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudtrail_cloudwatch_logging_enabled",
         "elbv2_logging_enabled",
         "elb_logging_enabled",
@@ -384,6 +493,20 @@
         "cloudwatch_changes_to_vpcs_alarm_configured",
         "guardduty_is_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -406,6 +529,20 @@
         "cloudwatch_changes_to_vpcs_alarm_configured",
         "guardduty_is_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -488,7 +625,6 @@
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudtrail_cloudwatch_logging_enabled",
         "elbv2_logging_enabled",
         "elb_logging_enabled",
@@ -519,6 +655,20 @@
         "guardduty_is_enabled",
         "rds_instance_enhanced_monitoring_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -587,7 +737,6 @@
       ],
       "Checks": [
         "ec2_instance_managed_by_ssm",
-        "ssm_managed_compliant_patching",
         "ssm_managed_compliant_patching"
       ]
     },
@@ -605,7 +754,6 @@
       "Checks": [
         "dynamodb_tables_pitr_enabled",
         "efs_have_backup_enabled",
-        "rds_instance_backup_enabled",
         "rds_instance_backup_enabled"
       ]
     },
@@ -624,7 +772,6 @@
         "dynamodb_tables_pitr_enabled",
         "efs_have_backup_enabled",
         "elbv2_deletion_protection",
-        "rds_instance_backup_enabled",
         "rds_instance_backup_enabled",
         "rds_instance_multi_az",
         "s3_bucket_object_versioning"
@@ -645,7 +792,6 @@
       "Checks": [
         "iam_root_hardware_mfa_enabled",
         "iam_root_mfa_enabled",
-        "iam_user_mfa_enabled_console_access",
         "iam_user_mfa_enabled_console_access"
       ]
     },
@@ -662,7 +808,6 @@
         }
       ],
       "Checks": [
-        "iam_user_mfa_enabled_console_access",
         "iam_user_mfa_enabled_console_access"
       ]
     },
@@ -681,7 +826,6 @@
       "Checks": [
         "iam_root_hardware_mfa_enabled",
         "iam_root_mfa_enabled",
-        "iam_user_mfa_enabled_console_access",
         "iam_user_mfa_enabled_console_access"
       ]
     },
@@ -812,6 +956,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -845,6 +997,20 @@
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -920,8 +1086,7 @@
         "sagemaker_notebook_instance_without_direct_internet_access_configured",
         "ec2_securitygroup_default_restrict_traffic",
         "ec2_networkacl_allow_ingress_any_port",
-        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22",
-        "ec2_networkacl_allow_ingress_any_port"
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22"
       ]
     },
     {
@@ -954,8 +1119,7 @@
         "sagemaker_notebook_instance_without_direct_internet_access_configured",
         "ec2_securitygroup_default_restrict_traffic",
         "ec2_networkacl_allow_ingress_any_port",
-        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22",
-        "ec2_networkacl_allow_ingress_any_port"
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22"
       ]
     },
     {
@@ -1056,7 +1220,6 @@
         "opensearch_service_domains_encryption_at_rest_enabled",
         "cloudwatch_log_group_kms_encryption_enabled",
         "rds_instance_storage_encrypted",
-        "rds_instance_storage_encrypted",
         "redshift_cluster_audit_logging",
         "s3_bucket_default_encryption",
         "sagemaker_notebook_instance_encryption_enabled",
@@ -1077,7 +1240,6 @@
       ],
       "Checks": [
         "ec2_instance_managed_by_ssm",
-        "ssm_managed_compliant_patching",
         "ssm_managed_compliant_patching"
       ]
     },
@@ -1095,6 +1257,14 @@
       ],
       "Checks": [
         "guardduty_is_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1118,6 +1288,20 @@
         "ec2_instance_imdsv2_enabled",
         "guardduty_is_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1140,6 +1324,20 @@
         "cloudwatch_changes_to_vpcs_alarm_configured",
         "guardduty_is_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1162,6 +1360,20 @@
         "cloudwatch_changes_to_vpcs_alarm_configured",
         "guardduty_is_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1179,6 +1391,20 @@
       "Checks": [
         "guardduty_is_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1203,6 +1429,20 @@
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1253,7 +1493,6 @@
         "cloudwatch_log_group_retention_policy_specific_days_enabled",
         "dynamodb_tables_pitr_enabled",
         "efs_have_backup_enabled",
-        "rds_instance_backup_enabled",
         "rds_instance_backup_enabled",
         "s3_bucket_object_versioning"
       ]

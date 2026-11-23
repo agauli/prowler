@@ -2,24 +2,25 @@ import json
 from typing import Optional
 
 from botocore.exceptions import ClientError
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
 
-################################ EventBridge
 class EventBridge(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
         super().__init__("events", provider)
         self.buses = {}
-        self.__threading_call__(self.__list_event_buses__)
-        self.__threading_call__(self.__describe_event_bus__)
-        self.__list_tags_for_resource__()
+        self.endpoints = {}
+        self.__threading_call__(self._list_event_buses)
+        self.__threading_call__(self._describe_event_bus)
+        self.__threading_call__(self._list_endpoints)
+        self._list_tags_for_resource()
 
-    def __list_event_buses__(self, regional_client):
+    def _list_event_buses(self, regional_client):
         logger.info("EventBridge - Listing Event Buses...")
         try:
             for bus in regional_client.list_event_buses()["EventBuses"]:
@@ -37,7 +38,7 @@ class EventBridge(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_event_bus__(self, regional_client):
+    def _describe_event_bus(self, regional_client):
         logger.info("EventBridge - Describing Event Buses...")
         try:
             for bus in self.buses.values():
@@ -55,7 +56,28 @@ class EventBridge(AWSService):
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_tags_for_resource__(self):
+    def _list_endpoints(self, regional_client):
+        logger.info("EventBridge - Listing Endpoints...")
+        try:
+            for endpoint in regional_client.list_endpoints()["Endpoints"]:
+                endpoint_arn = endpoint["Arn"]
+                if not self.audit_resources or (
+                    is_resource_filtered(endpoint_arn, self.audit_resources)
+                ):
+                    self.endpoints[endpoint_arn] = Endpoint(
+                        name=endpoint.get("Name", ""),
+                        arn=endpoint_arn,
+                        region=regional_client.region,
+                        replication_state=endpoint.get("ReplicationConfig", {}).get(
+                            "State", "DISABLED"
+                        ),
+                    )
+        except Exception as error:
+            logger.error(
+                f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
+    def _list_tags_for_resource(self):
         logger.info("EventBridge - Listing Tags...")
         try:
             for bus in self.buses.values():
@@ -92,22 +114,29 @@ class Bus(BaseModel):
     tags: Optional[list]
 
 
-################################ Schema
+class Endpoint(BaseModel):
+    name: str
+    arn: str
+    region: str
+    replication_state: str
+    tags: Optional[list] = []
+
+
 class Schema(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
         super().__init__("schemas", provider)
         self.registries = {}
-        self.__threading_call__(self.__list_registries__)
-        self.__threading_call__(self.__get_resource_policy__)
+        self.__threading_call__(self._list_registries)
+        self.__threading_call__(self._get_resource_policy)
 
-    def __list_registries__(self, regional_client):
+    def _list_registries(self, regional_client):
         logger.info("EventBridge - Listing Schema Registries...")
         try:
             for registry in regional_client.list_registries()["Registries"]:
                 registry_arn = registry.get(
                     "RegistryArn",
-                    f"arn:aws:schemas:{regional_client.region}:{self.audited_account}:registry/{registry.get('RegistryName', '')}",
+                    f"arn:{self.audited_partition}:schemas:{regional_client.region}:{self.audited_account}:registry/{registry.get('RegistryName', '')}",
                 )
                 if not self.audit_resources or (
                     is_resource_filtered(registry_arn, self.audit_resources)
@@ -123,7 +152,7 @@ class Schema(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_resource_policy__(self, regional_client):
+    def _get_resource_policy(self, regional_client):
         logger.info("EventBridge - Getting Registry Resource Policy...")
         try:
             for registry in self.registries.values():

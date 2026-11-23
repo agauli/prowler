@@ -1,34 +1,38 @@
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
+from prowler.providers.gcp.config import DEFAULT_RETRY_ATTEMPTS
 from prowler.providers.gcp.gcp_provider import GcpProvider
 from prowler.providers.gcp.lib.service.service import GCPService
 
 
-################## DNS
 class DNS(GCPService):
     def __init__(self, provider: GcpProvider):
         super().__init__(__class__.__name__, provider)
         self.managed_zones = []
-        self.__get_managed_zones__()
+        self._get_managed_zones()
         self.policies = []
-        self.__get_policies__()
+        self._get_policies()
 
-    def __get_managed_zones__(self):
+    def _get_managed_zones(self):
         for project_id in self.project_ids:
             try:
                 request = self.client.managedZones().list(project=project_id)
                 while request is not None:
-                    response = request.execute()
+                    response = request.execute(num_retries=DEFAULT_RETRY_ATTEMPTS)
                     for managed_zone in response.get("managedZones"):
                         self.managed_zones.append(
                             ManagedZone(
                                 name=managed_zone["name"],
                                 id=managed_zone["id"],
-                                dnssec=managed_zone["dnssecConfig"]["state"] == "on",
-                                key_specs=managed_zone["dnssecConfig"][
-                                    "defaultKeySpecs"
-                                ],
+                                dnssec=managed_zone.get("dnssecConfig", {}).get(
+                                    "state", ""
+                                )
+                                == "on",
+                                key_specs=managed_zone.get("dnssecConfig", {}).get(
+                                    "defaultKeySpecs", []
+                                ),
+                                visibility=managed_zone.get("visibility", "public"),
                                 project_id=project_id,
                             )
                         )
@@ -41,12 +45,12 @@ class DNS(GCPService):
                     f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                 )
 
-    def __get_policies__(self):
+    def _get_policies(self):
         for project_id in self.project_ids:
             try:
                 request = self.client.policies().list(project=project_id)
                 while request is not None:
-                    response = request.execute()
+                    response = request.execute(num_retries=DEFAULT_RETRY_ATTEMPTS)
 
                     for policy in response.get("policies", []):
                         policy_networks = []
@@ -76,6 +80,7 @@ class ManagedZone(BaseModel):
     id: str
     dnssec: bool
     key_specs: list
+    visibility: str = "public"
     project_id: str
 
 

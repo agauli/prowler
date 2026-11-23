@@ -1,61 +1,93 @@
 from datetime import datetime
-from typing import Optional
+from ipaddress import IPv4Address, IPv6Address, ip_address
+from typing import ClassVar, Optional, Union
 
 from botocore.client import ClientError
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
+from prowler.lib.resource_limit import (
+    get_resource_scan_limit,
+    limit_resources,
+)
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
+DESCRIBE_IMAGES_IMAGE_IDS_BATCH_SIZE = 200
 
-################## EC2
+
 class EC2(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
         super().__init__(__class__.__name__, provider)
         self.account_arn_template = f"arn:{self.audited_partition}:ec2:{self.region}:{self.audited_account}:account"
         self.instances = []
-        self.__threading_call__(self.__describe_instances__)
-        self.__threading_call__(self.__get_instance_user_data__, self.instances)
+        self.__threading_call__(self._describe_instances)
+        self.__threading_call__(self._get_instance_user_data, self.instances)
         self.security_groups = {}
         self.regions_with_sgs = []
-        self.__threading_call__(self.__describe_security_groups__)
-        self.network_acls = []
-        self.__threading_call__(self.__describe_network_acls__)
+        self.__threading_call__(self._describe_security_groups)
+        self.managed_prefix_lists = {}
+        self.__threading_call__(self._describe_managed_prefix_lists)
+        self.network_acls = {}
+        self.__threading_call__(self._describe_network_acls)
         self.snapshots = []
         self.volumes_with_snapshots = {}
         self.regions_with_snapshots = {}
-        self.__threading_call__(self.__describe_snapshots__)
-        self.__threading_call__(self.__determine_public_snapshots__, self.snapshots)
-        self.network_interfaces = []
-        self.__threading_call__(self.__describe_network_interfaces__)
-        self.images = []
-        self.__threading_call__(self.__describe_images__)
-        self.volumes = []
-        self.__threading_call__(self.__describe_volumes__)
-        self.attributes_for_regions = {}
-        self.__threading_call__(self.__get_resources_for_regions__)
-        self.ebs_encryption_by_default = []
-        self.__threading_call__(self.__get_ebs_encryption_settings__)
-        self.elastic_ips = []
-        self.__threading_call__(self.__describe_ec2_addresses__)
-        self.ebs_block_public_access_snapshots_states = []
-        self.__threading_call__(self.__get_snapshot_block_public_access_state__)
-        self.instance_metadata_defaults = []
-        self.__threading_call__(self.__get_instance_metadata_defaults__)
-        self.launch_templates = []
-        self.__threading_call__(self.__describe_launch_templates)
-        self.__threading_call__(
-            self.__get_launch_template_versions__, self.launch_templates
+        # Snapshots are listed first, then limited after per-region snapshot
+        # presence is derived and before public status is hydrated.
+        self.snapshot_limit = get_resource_scan_limit(
+            self.audit_config, "max_ebs_snapshots"
         )
+        self.__threading_call__(self._describe_snapshots)
+        self.network_interfaces = {}
+        self.__threading_call__(self._describe_network_interfaces)
+        self.images = []
+        self.images_by_id = {}
+        # Provenance of the AMIs instances run that ``Owners=["self"]`` did
+        # not return, looked up by id: Amazon's, marketplace, community and
+        # vendor accounts (such as a Linux distribution's), and own AMIs the
+        # resource filter left out. Only for matching an instance to its
+        # image; ``images`` keeps holding just this account's and Amazon's
+        # AMIs that the filter keeps, so checks on owned AMIs never judge
+        # somebody else's.
+        self.instance_images_by_id = {}
+        # AMI ids whose lookup failed (permissions, throttling), as opposed to
+        # AMIs that no longer exist: a check must not pass what it never saw.
+        self.image_lookup_failures = set()
+        self.__threading_call__(self._describe_images)
+        self.volumes = []
+        self.__threading_call__(self._describe_volumes)
+        self.attributes_for_regions = {}
+        self.__threading_call__(self._get_resources_for_regions)
+        self._select_snapshots_for_analysis()
+        self.__threading_call__(self._determine_public_snapshots, self.snapshots)
+        self.ebs_encryption_by_default = []
+        self.__threading_call__(self._get_ebs_encryption_settings)
+        self.elastic_ips = []
+        self.__threading_call__(self._describe_ec2_addresses)
+        self.ebs_block_public_access_snapshots_states = []
+        self.__threading_call__(self._get_snapshot_block_public_access_state)
+        self.ami_block_public_access_states = []
+        self.__threading_call__(self._get_ami_block_public_access_state)
+        self.instance_metadata_defaults = []
+        self.__threading_call__(self._get_instance_metadata_defaults)
+        self.launch_templates = []
+        self.__threading_call__(self._describe_launch_templates)
+        self.__threading_call__(
+            self._describe_launch_template_versions, self.launch_templates
+        )
+        self.vpn_endpoints = {}
+        self.__threading_call__(self._describe_vpn_endpoints)
+        self.transit_gateways = {}
+        self.__threading_call__(self._describe_transit_gateways)
 
-    def __get_volume_arn_template__(self, region):
+    def _get_volume_arn_template(self, region):
         return (
             f"arn:{self.audited_partition}:ec2:{region}:{self.audited_account}:volume"
         )
 
-    def __describe_instances__(self, regional_client):
+    def _describe_instances(self, regional_client):
         try:
             describe_instances_paginator = regional_client.get_paginator(
                 "describe_instances"
@@ -67,6 +99,14 @@ class EC2(AWSService):
                         if not self.audit_resources or (
                             is_resource_filtered(arn, self.audit_resources)
                         ):
+                            enis, ipv6_addresses = [], []
+                            for eni in instance.get("NetworkInterfaces", []):
+                                network_interface_id = eni.get("NetworkInterfaceId")
+                                if network_interface_id:
+                                    enis.append(network_interface_id)
+                                for ipv6 in eni.get("Ipv6Addresses", []):
+                                    if ipv6.get("Ipv6Address"):
+                                        ipv6_addresses.append(ipv6["Ipv6Address"])
                             self.instances.append(
                                 Instance(
                                     id=instance["InstanceId"],
@@ -76,6 +116,9 @@ class EC2(AWSService):
                                     type=instance["InstanceType"],
                                     image_id=instance["ImageId"],
                                     launch_time=instance["LaunchTime"],
+                                    state_transition_reason=instance.get(
+                                        "StateTransitionReason"
+                                    ),
                                     private_dns=instance["PrivateDnsName"],
                                     private_ip=instance.get("PrivateIpAddress"),
                                     public_dns=instance.get("PublicDnsName"),
@@ -93,8 +136,21 @@ class EC2(AWSService):
                                     security_groups=[
                                         sg["GroupId"]
                                         for sg in instance.get("SecurityGroups", [])
+                                        if isinstance(sg, dict) and "GroupId" in sg
                                     ],
                                     subnet_id=instance.get("SubnetId", ""),
+                                    network_interfaces=enis,
+                                    ipv6_addresses=ipv6_addresses,
+                                    virtualization_type=instance.get(
+                                        "VirtualizationType"
+                                    ),
+                                    enclaves_enabled=instance.get(
+                                        "EnclaveOptions", {}
+                                    ).get("Enabled", False),
+                                    hibernation_enabled=instance.get(
+                                        "HibernationOptions", {}
+                                    ).get("Configured", False),
+                                    platform=instance.get("Platform"),
                                     tags=instance.get("Tags"),
                                 )
                             )
@@ -103,7 +159,7 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_security_groups__(self, regional_client):
+    def _describe_security_groups(self, regional_client):
         try:
             describe_security_groups_paginator = regional_client.get_paginator(
                 "describe_security_groups"
@@ -124,6 +180,7 @@ class EC2(AWSService):
                             name=sg["GroupName"],
                             region=regional_client.region,
                             id=sg["GroupId"],
+                            arn=arn,
                             ingress_rules=sg["IpPermissions"],
                             egress_rules=sg["IpPermissionsEgress"],
                             associated_sgs=associated_sgs,
@@ -137,7 +194,43 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_network_acls__(self, regional_client):
+    def _describe_managed_prefix_lists(self, regional_client):
+        try:
+            describe_managed_prefix_lists_paginator = regional_client.get_paginator(
+                "describe_managed_prefix_lists"
+            )
+            for page in describe_managed_prefix_lists_paginator.paginate():
+                for prefix_list in page["PrefixLists"]:
+                    # AWS-managed prefix lists hold AWS service ranges, not the internet
+                    if prefix_list.get("OwnerId") == "AWS":
+                        continue
+                    try:
+                        entries = []
+                        entries_pages = regional_client.get_paginator(
+                            "get_managed_prefix_list_entries"
+                        ).paginate(PrefixListId=prefix_list["PrefixListId"])
+                        for entries_page in entries_pages:
+                            for entry in entries_page["Entries"]:
+                                entries.append(entry["Cidr"])
+                        self.managed_prefix_lists[prefix_list["PrefixListId"]] = (
+                            ManagedPrefixList(
+                                id=prefix_list["PrefixListId"],
+                                arn=prefix_list["PrefixListArn"],
+                                name=prefix_list.get("PrefixListName", ""),
+                                region=regional_client.region,
+                                entries=entries,
+                            )
+                        )
+                    except Exception as error:
+                        logger.error(
+                            f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                        )
+        except Exception as error:
+            logger.error(
+                f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
+    def _describe_network_acls(self, regional_client):
         try:
             describe_network_acls_paginator = regional_client.get_paginator(
                 "describe_network_acls"
@@ -152,22 +245,27 @@ class EC2(AWSService):
                         for tag in nacl.get("Tags", []):
                             if tag["Key"] == "Name":
                                 nacl_name = tag["Value"]
-                        self.network_acls.append(
-                            NetworkACL(
-                                id=nacl["NetworkAclId"],
-                                arn=arn,
-                                name=nacl_name,
-                                region=regional_client.region,
-                                entries=nacl["Entries"],
-                                tags=nacl.get("Tags"),
-                            )
+                        in_use = False
+                        for subnet in nacl["Associations"]:
+                            if subnet["SubnetId"]:
+                                in_use = True
+                                break
+                        self.network_acls[arn] = NetworkACL(
+                            id=nacl["NetworkAclId"],
+                            arn=arn,
+                            name=nacl_name,
+                            region=regional_client.region,
+                            entries=nacl["Entries"],
+                            tags=nacl.get("Tags"),
+                            in_use=in_use,
+                            default=nacl["IsDefault"],
                         )
         except Exception as error:
             logger.error(
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_snapshots__(self, regional_client):
+    def _describe_snapshots(self, regional_client):
         try:
             snapshots_in_region = False
             describe_snapshots_paginator = regional_client.get_paginator(
@@ -187,6 +285,7 @@ class EC2(AWSService):
                                 arn=arn,
                                 region=regional_client.region,
                                 encrypted=snapshot.get("Encrypted", False),
+                                start_time=snapshot.get("StartTime"),
                                 tags=snapshot.get("Tags"),
                                 volume=snapshot["VolumeId"],
                             )
@@ -200,7 +299,7 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __determine_public_snapshots__(self, snapshot):
+    def _determine_public_snapshots(self, snapshot):
         try:
             regional_client = self.regional_clients[snapshot.region]
             snapshot_public = regional_client.describe_snapshot_attribute(
@@ -223,7 +322,19 @@ class EC2(AWSService):
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_network_interfaces__(self, regional_client):
+    def _select_snapshots_for_analysis(self):
+        self.snapshots = list(
+            limit_resources(
+                sorted(
+                    self.snapshots,
+                    key=lambda s: (s.start_time.timestamp() if s.start_time else 0.0),
+                    reverse=True,
+                ),
+                self.snapshot_limit,
+            )
+        )
+
+    def _describe_network_interfaces(self, regional_client):
         try:
             # Get Network Interfaces with Public IPs
             describe_network_interfaces_paginator = regional_client.get_paginator(
@@ -231,18 +342,55 @@ class EC2(AWSService):
             )
             for page in describe_network_interfaces_paginator.paginate():
                 for interface in page["NetworkInterfaces"]:
-                    eni = NetworkInterface(
-                        id=interface["NetworkInterfaceId"],
+                    id = interface["NetworkInterfaceId"]
+                    public_ip_addresses = []
+
+                    # Check for public IPs in the 'PrivateIpAddresses' block
+                    for private_ip_info in interface.get("PrivateIpAddresses", []):
+                        private_association = private_ip_info.get("Association", {})
+                        public_ip_str = private_association.get("PublicIp")
+                        if public_ip_str:
+                            public_ip = ip_address(public_ip_str)
+                            if public_ip.is_global:
+                                public_ip_addresses.append(public_ip)
+
+                        private_ip_str = private_ip_info.get("PrivateIpAddress")
+                        if private_ip_str:
+                            private_ip = ip_address(private_ip_str)
+                            if private_ip.is_global:
+                                public_ip_addresses.append(private_ip)
+
+                    # Check for public IPs in the 'IPv6Addresses' block
+                    for ipv6_info in interface.get("Ipv6Addresses", []):
+                        ipv6_address_str = ipv6_info.get("Ipv6Address")
+                        if ipv6_address_str:
+                            ipv6_address = ip_address(ipv6_address_str)
+                            if ipv6_address.is_global:
+                                public_ip_addresses.append(ipv6_address)
+                    attachment = Attachment(
+                        attachment_id=interface.get("Attachment", {}).get(
+                            "AttachmentId", ""
+                        ),
+                        instance_id=interface.get("Attachment", {}).get(
+                            "InstanceId", ""
+                        ),
+                        instance_owner_id=interface.get("Attachment", {}).get(
+                            "InstanceOwnerId", ""
+                        ),
+                        status=interface.get("Attachment", {}).get("Status", ""),
+                    )
+                    self.network_interfaces[id] = NetworkInterface(
+                        id=id,
                         association=interface.get("Association", {}),
-                        attachment=interface.get("Attachment", {}),
+                        attachment=attachment,
                         private_ip=interface.get("PrivateIpAddress"),
                         type=interface["InterfaceType"],
                         subnet_id=interface["SubnetId"],
                         vpc_id=interface["VpcId"],
                         region=regional_client.region,
                         tags=interface.get("TagSet"),
+                        public_ip_addresses=public_ip_addresses,
                     )
-                    self.network_interfaces.append(eni)
                     # Add Network Interface to Security Group
                     # 'Groups': [
                     #     {
@@ -250,8 +398,8 @@ class EC2(AWSService):
                     #         'GroupName': 'default',
                     #     },
                     # ],
-                    self.__add_network_interfaces_to_security_groups__(
-                        eni, interface.get("Groups", [])
+                    self._add_network_interfaces_to_security_groups(
+                        self.network_interfaces[id], interface.get("Groups", [])
                     )
 
         except Exception as error:
@@ -259,7 +407,7 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __add_network_interfaces_to_security_groups__(
+    def _add_network_interfaces_to_security_groups(
         self, interface, interface_security_groups
     ):
         try:
@@ -272,7 +420,7 @@ class EC2(AWSService):
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_instance_user_data__(self, instance):
+    def _get_instance_user_data(self, instance):
         try:
             regional_client = self.regional_clients[instance.region]
             user_data = regional_client.describe_instance_attribute(
@@ -290,29 +438,132 @@ class EC2(AWSService):
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_images__(self, regional_client):
+    def _describe_images(self, regional_client):
         try:
-            for image in regional_client.describe_images(Owners=["self"])["Images"]:
-                arn = f"arn:{self.audited_partition}:ec2:{regional_client.region}:{self.audited_account}:image/{image['ImageId']}"
-                if not self.audit_resources or (
-                    is_resource_filtered(arn, self.audit_resources)
-                ):
-                    self.images.append(
-                        Image(
-                            id=image["ImageId"],
-                            arn=arn,
-                            name=image["Name"],
-                            public=image.get("Public", False),
-                            region=regional_client.region,
-                            tags=image.get("Tags"),
-                        )
-                    )
+            try:
+                for image in regional_client.describe_images(
+                    Owners=["self"], IncludeDeprecated=True
+                )["Images"]:
+                    self._add_image(image, regional_client.region, "self")
+            except Exception as error:
+                logger.error(
+                    f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+
+            amazon_image_ids = sorted(
+                {
+                    instance.image_id
+                    for instance in self.instances
+                    if instance.region == regional_client.region
+                    and instance.image_id
+                    and instance.image_id not in self.images_by_id
+                }
+            )
+
+            for image_batch in self._get_image_id_batches(amazon_image_ids):
+                for image in self._describe_images_by_id(regional_client, image_batch):
+                    if self._is_amazon_image(image):
+                        owner = "amazon"
+                    elif image.get("OwnerId") == self.audited_account:
+                        # An own AMI the resource filter or a failed
+                        # ``Owners=["self"]`` call left for this lookup.
+                        owner = "self"
+                    else:
+                        owner = "third_party"
+                    if owner == "amazon":
+                        self._add_image(image, regional_client.region, owner)
+                    # Provenance survives a resource filter that leaves the
+                    # AMI itself out of ``images``.
+                    self._add_instance_image(image, regional_client.region, owner)
         except Exception as error:
             logger.error(
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_volumes__(self, regional_client):
+    def _add_image(self, image, region, owner):
+        arn = f"arn:{self.audited_partition}:ec2:{region}:{self.audited_account}:image/{image['ImageId']}"
+        if not self.audit_resources or (
+            is_resource_filtered(arn, self.audit_resources)
+        ):
+            ec2_image = Image(
+                id=image["ImageId"],
+                arn=arn,
+                name=image.get("Name", ""),
+                public=image.get("Public", False),
+                region=region,
+                tags=image.get("Tags"),
+                deprecation_time=image.get("DeprecationTime"),
+                owner=owner,
+                owner_id=image.get("OwnerId", ""),
+                description=image.get("Description", ""),
+            )
+            self.images.append(ec2_image)
+            self.images_by_id[ec2_image.id] = ec2_image
+
+    def _add_instance_image(self, image, region, owner="third_party"):
+        """Record an AMI an instance runs, for provenance only."""
+        owner_id = image.get("OwnerId", "")
+        self.instance_images_by_id[image["ImageId"]] = Image(
+            id=image["ImageId"],
+            arn=f"arn:{self.audited_partition}:ec2:{region}:{owner_id}:image/{image['ImageId']}",
+            name=image.get("Name", ""),
+            public=image.get("Public", False),
+            region=region,
+            tags=image.get("Tags"),
+            deprecation_time=image.get("DeprecationTime"),
+            owner=owner,
+            owner_id=owner_id,
+            description=image.get("Description", ""),
+        )
+
+    def image_for_instance(self, instance) -> Optional["Image"]:
+        """The AMI an instance was launched from, whoever published it."""
+        return self.images_by_id.get(
+            instance.image_id
+        ) or self.instance_images_by_id.get(instance.image_id)
+
+    def _describe_images_by_id(self, regional_client, image_ids):
+        try:
+            return regional_client.describe_images(
+                ImageIds=image_ids, IncludeDeprecated=True
+            )["Images"]
+        except ClientError as error:
+            # NotFound, Unavailable (deregistered) and Malformed name one bad
+            # id: split the batch so the other AMIs are still described.
+            if error.response["Error"]["Code"].startswith("InvalidAMIID."):
+                if len(image_ids) == 1:
+                    logger.warning(
+                        f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                    )
+                    return []
+
+                midpoint = len(image_ids) // 2
+                return self._describe_images_by_id(
+                    regional_client, image_ids[:midpoint]
+                ) + self._describe_images_by_id(regional_client, image_ids[midpoint:])
+
+            logger.error(
+                f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+            self.image_lookup_failures.update(image_ids)
+            return []
+        except Exception as error:
+            self.image_lookup_failures.update(image_ids)
+            logger.error(
+                f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+            return []
+
+    @staticmethod
+    def _get_image_id_batches(image_ids):
+        for index in range(0, len(image_ids), DESCRIBE_IMAGES_IMAGE_IDS_BATCH_SIZE):
+            yield image_ids[index : index + DESCRIBE_IMAGES_IMAGE_IDS_BATCH_SIZE]
+
+    @staticmethod
+    def _is_amazon_image(image):
+        return image.get("ImageOwnerAlias") == "amazon"
+
+    def _describe_volumes(self, regional_client):
         try:
             describe_volumes_paginator = regional_client.get_paginator(
                 "describe_volumes"
@@ -337,7 +588,7 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_ec2_addresses__(self, regional_client):
+    def _describe_ec2_addresses(self, regional_client):
         try:
             for address in regional_client.describe_addresses()["Addresses"]:
                 public_ip = None
@@ -368,7 +619,7 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_ebs_encryption_settings__(self, regional_client):
+    def _get_ebs_encryption_settings(self, regional_client):
         try:
             volumes_in_region = self.attributes_for_regions.get(
                 regional_client.region, []
@@ -388,7 +639,7 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_snapshot_block_public_access_state__(self, regional_client):
+    def _get_snapshot_block_public_access_state(self, regional_client):
         try:
             snapshots_in_region = self.attributes_for_regions.get(
                 regional_client.region, []
@@ -408,7 +659,22 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_instance_metadata_defaults__(self, regional_client):
+    def _get_ami_block_public_access_state(self, regional_client):
+        try:
+            self.ami_block_public_access_states.append(
+                AmiBlockPublicAccess(
+                    status=regional_client.get_image_block_public_access_state()[
+                        "ImageBlockPublicAccessState"
+                    ],
+                    region=regional_client.region,
+                )
+            )
+        except Exception as error:
+            logger.error(
+                f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
+    def _get_instance_metadata_defaults(self, regional_client):
         try:
             instances_in_region = self.attributes_for_regions.get(
                 regional_client.region, []
@@ -428,7 +694,7 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_resources_for_regions__(self, regional_client):
+    def _get_resources_for_regions(self, regional_client):
         try:
             has_instances = False
             for instance in self.instances:
@@ -455,7 +721,7 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_launch_templates(self, regional_client):
+    def _describe_launch_templates(self, regional_client):
         try:
             describe_launch_templates_paginator = regional_client.get_paginator(
                 "describe_launch_templates"
@@ -463,7 +729,7 @@ class EC2(AWSService):
 
             for page in describe_launch_templates_paginator.paginate():
                 for template in page["LaunchTemplates"]:
-                    template_arn = f"arn:aws:ec2:{regional_client.region}:{self.audited_account}:launch-template/{template['LaunchTemplateId']}"
+                    template_arn = f"arn:{self.audited_partition}:ec2:{regional_client.region}:{self.audited_account}:launch-template/{template['LaunchTemplateId']}"
                     if not self.audit_resources or (
                         is_resource_filtered(template_arn, self.audit_resources)
                     ):
@@ -474,6 +740,7 @@ class EC2(AWSService):
                                 arn=template_arn,
                                 region=regional_client.region,
                                 versions=[],
+                                tags=template.get("Tags"),
                             )
                         )
 
@@ -482,7 +749,7 @@ class EC2(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_launch_template_versions__(self, launch_template):
+    def _describe_launch_template_versions(self, launch_template):
         try:
             regional_client = self.regional_clients[launch_template.region]
             describe_launch_template_versions_paginator = regional_client.get_paginator(
@@ -493,12 +760,94 @@ class EC2(AWSService):
                 LaunchTemplateId=launch_template.id
             ):
                 for template_version in page["LaunchTemplateVersions"]:
+                    enis = []
+                    associate_public_ip = False
+                    for eni in template_version["LaunchTemplateData"].get(
+                        "NetworkInterfaces", []
+                    ):
+                        network_interface_id = eni.get("NetworkInterfaceId", "")
+                        if network_interface_id in self.network_interfaces:
+                            enis.append(self.network_interfaces[network_interface_id])
+                        if eni.get("AssociatePublicIpAddress", False):
+                            associate_public_ip = True
                     launch_template.versions.append(
                         LaunchTemplateVersion(
                             version_number=template_version["VersionNumber"],
-                            template_data=template_version["LaunchTemplateData"],
+                            template_data=TemplateData(
+                                user_data=template_version["LaunchTemplateData"].get(
+                                    "UserData", ""
+                                ),
+                                network_interfaces=enis,
+                                associate_public_ip_address=associate_public_ip,
+                                http_tokens=template_version["LaunchTemplateData"]
+                                .get("MetadataOptions", {})
+                                .get("HttpTokens", ""),
+                                http_endpoint=template_version["LaunchTemplateData"]
+                                .get("MetadataOptions", {})
+                                .get("HttpEndpoint", ""),
+                            ),
                         )
                     )
+
+        except Exception as error:
+            logger.error(
+                f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
+    def _describe_vpn_endpoints(self, regional_client):
+        try:
+            describe_client_vpn_endpoints_paginator = regional_client.get_paginator(
+                "describe_client_vpn_endpoints"
+            )
+
+            for page in describe_client_vpn_endpoints_paginator.paginate():
+                for vpn_endpoint in page["ClientVpnEndpoints"]:
+                    vpn_endpoint_arn = f"arn:{self.audited_partition}:ec2:{regional_client.region}:{self.audited_account}:client-vpn-endpoint/{vpn_endpoint['ClientVpnEndpointId']}"
+                    if not self.audit_resources or (
+                        is_resource_filtered(vpn_endpoint_arn, self.audit_resources)
+                    ):
+                        self.vpn_endpoints[vpn_endpoint_arn] = VpnEndpoint(
+                            id=vpn_endpoint["ClientVpnEndpointId"],
+                            arn=vpn_endpoint_arn,
+                            connection_logging=vpn_endpoint["ConnectionLogOptions"][
+                                "Enabled"
+                            ],
+                            region=regional_client.region,
+                            tags=vpn_endpoint.get("Tags"),
+                        )
+
+        except Exception as error:
+            logger.error(
+                f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
+    def _describe_transit_gateways(self, regional_client):
+        try:
+            describe_transit_gateways_paginator = regional_client.get_paginator(
+                "describe_transit_gateways"
+            )
+
+            for page in describe_transit_gateways_paginator.paginate():
+                for transit_gateway in page["TransitGateways"]:
+                    if not self.audit_resources or (
+                        is_resource_filtered(
+                            transit_gateway["TransitGatewayArn"], self.audit_resources
+                        )
+                    ):
+                        self.transit_gateways[transit_gateway["TransitGatewayArn"]] = (
+                            TransitGateway(
+                                id=transit_gateway["TransitGatewayId"],
+                                arn=transit_gateway["TransitGatewayArn"],
+                                auto_accept_shared_attachments=(
+                                    transit_gateway["Options"][
+                                        "AutoAcceptSharedAttachments"
+                                    ]
+                                    == "enable"
+                                ),
+                                region=regional_client.region,
+                                tags=transit_gateway.get("Tags"),
+                            )
+                        )
 
         except Exception as error:
             logger.error(
@@ -514,10 +863,12 @@ class Instance(BaseModel):
     type: str
     image_id: str
     launch_time: datetime
+    state_transition_reason: Optional[str] = None
     private_dns: str
     private_ip: Optional[str]
     public_dns: Optional[str]
     public_ip: Optional[str]
+    sensitive_fields: ClassVar[tuple[str, ...]] = ("user_data",)
     user_data: Optional[str]
     http_tokens: Optional[str]
     http_endpoint: Optional[str]
@@ -525,6 +876,12 @@ class Instance(BaseModel):
     security_groups: list[str]
     subnet_id: str
     instance_profile: Optional[dict]
+    network_interfaces: Optional[list]
+    ipv6_addresses: list[str] = []
+    virtualization_type: Optional[str]
+    enclaves_enabled: Optional[bool] = False
+    hibernation_enabled: Optional[bool] = False
+    platform: Optional[str] = None
     tags: Optional[list] = []
 
 
@@ -534,6 +891,7 @@ class Snapshot(BaseModel):
     region: str
     encrypted: bool
     public: bool = False
+    start_time: Optional[datetime] = None
     tags: Optional[list] = []
     volume: Optional[str]
 
@@ -546,11 +904,19 @@ class Volume(BaseModel):
     tags: Optional[list] = []
 
 
+class Attachment(BaseModel):
+    attachment_id: str = ""
+    instance_id: str = ""
+    instance_owner_id: str = ""
+    status: str = ""
+
+
 class NetworkInterface(BaseModel):
     id: str
     association: dict
-    attachment: dict
+    attachment: Attachment
     private_ip: Optional[str]
+    public_ip_addresses: list[Union[IPv4Address, IPv6Address]]
     type: str
     subnet_id: str
     vpc_id: str
@@ -561,6 +927,7 @@ class NetworkInterface(BaseModel):
 class SecurityGroup(BaseModel):
     name: str
     region: str
+    arn: str
     id: str
     vpc_id: str
     associated_sgs: list
@@ -570,12 +937,24 @@ class SecurityGroup(BaseModel):
     tags: Optional[list] = []
 
 
+class ManagedPrefixList(BaseModel):
+    """Customer managed prefix list and the CIDRs of its entries."""
+
+    id: str
+    arn: str
+    name: str
+    region: str
+    entries: list[str]
+
+
 class NetworkACL(BaseModel):
     id: str
     arn: str
     name: str
     region: str
     entries: list[dict]
+    default: bool
+    in_use: bool
     tags: Optional[list] = []
 
 
@@ -593,8 +972,14 @@ class Image(BaseModel):
     arn: str
     name: str
     public: bool
+    deprecation_time: Optional[str]
+    owner: str
     region: str
     tags: Optional[list] = []
+    #: The publishing account id; ``owner`` is a label ("self", "amazon",
+    #: "third_party") for which of this service's lists the image sits in.
+    owner_id: str = ""
+    description: str = ""
 
 
 class EbsEncryptionByDefault(BaseModel):
@@ -609,15 +994,29 @@ class EbsSnapshotBlockPublicAccess(BaseModel):
     region: str
 
 
+class AmiBlockPublicAccess(BaseModel):
+    status: str
+    region: str
+
+
 class InstanceMetadataDefaults(BaseModel):
     http_tokens: Optional[str]
     instances: bool
     region: str
 
 
+class TemplateData(BaseModel):
+    sensitive_fields: ClassVar[tuple[str, ...]] = ("user_data",)
+    user_data: str
+    network_interfaces: Optional[list[NetworkInterface]]
+    associate_public_ip_address: Optional[bool]
+    http_tokens: Optional[str]
+    http_endpoint: Optional[str]
+
+
 class LaunchTemplateVersion(BaseModel):
     version_number: int
-    template_data: dict
+    template_data: TemplateData
 
 
 class LaunchTemplate(BaseModel):
@@ -626,3 +1025,20 @@ class LaunchTemplate(BaseModel):
     arn: str
     region: str
     versions: list[LaunchTemplateVersion] = []
+    tags: Optional[list] = []
+
+
+class VpnEndpoint(BaseModel):
+    id: str
+    arn: str
+    connection_logging: bool
+    region: str
+    tags: Optional[list] = []
+
+
+class TransitGateway(BaseModel):
+    id: str
+    arn: str
+    auto_accept_shared_attachments: bool
+    region: str
+    tags: Optional[list] = []

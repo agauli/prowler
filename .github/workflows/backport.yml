@@ -1,38 +1,63 @@
-name: Automatic Backport
+name: 'Tools: Backport'
 
 on:
+  # zizmor: ignore[dangerous-triggers] - intentional: needs write access for backport PRs, no PR code checkout
   pull_request_target:
-    branches: ['master']
-    types: ['labeled', 'closed']
+    branches:
+      - 'master'
+    types:
+      - 'labeled'
+      - 'closed'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  BACKPORT_LABEL_PREFIX: backport-to-
+  BACKPORT_LABEL_IGNORE: was-backported
+
+permissions: {}
 
 jobs:
   backport:
-    name: Backport PR
-    if: github.event.pull_request.merged == true && !(contains(github.event.pull_request.labels.*.name, 'backport'))
+    if: github.event.pull_request.merged == true && !(contains(github.event.pull_request.labels.*.name, 'backport')) && !(contains(github.event.pull_request.labels.*.name, 'was-backported'))
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+
     steps:
-      # Workaround not to fail the workflow if the PR does not need a backport
-      # https://github.com/sorenlouv/backport-github-action/issues/127#issuecomment-2258561266
-      - name: Check for backport labels
-        id: check_labels
-        run: |-
-          labels='${{ toJSON(github.event.pull_request.labels.*.name) }}'
-          echo "$labels"
-          matched=$(echo "${labels}" | jq '. | map(select(startswith("backport-to-"))) | length')
-          echo "matched=$matched"
-          echo "matched=$matched" >> $GITHUB_OUTPUT
-
-      - name: Backport Action
-        if: fromJSON(steps.check_labels.outputs.matched) > 0
-        uses: sorenlouv/backport-github-action@v9.5.1
+      - name: Harden Runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          auto_backport_label_prefix: backport-to-
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
 
-      - name: Info log
-        if: ${{ success() && fromJSON(steps.check_labels.outputs.matched) > 0 }}
+      - name: Check labels
+        id: label_check
+        uses: agilepathway/label-checker@ca6a0a663cbcf80bb9c7a10d000d7b6a54495ce0 # v1.6.115
+        with:
+          allow_failure: true
+          prefix_mode: true
+          any_of: ${{ env.BACKPORT_LABEL_PREFIX }}
+          none_of: ${{ env.BACKPORT_LABEL_IGNORE }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Backport PR
+        if: steps.label_check.outputs.label_check == 'success'
+        uses: sorenlouv/backport-github-action@9460b7102fea25466026ce806c9ebf873ac48721 # v11.0.0
+        with:
+          github_token: ${{ secrets.PROWLER_BOT_ACCESS_TOKEN }}
+          auto_backport_label_prefix: ${{ env.BACKPORT_LABEL_PREFIX }}
+
+      - name: Display backport info log
+        if: success() && steps.label_check.outputs.label_check == 'success'
         run: cat ~/.backport/backport.info.log
 
-      - name: Debug log
-        if: ${{ failure() && fromJSON(steps.check_labels.outputs.matched) > 0 }}
+      - name: Display backport debug log
+        if: failure() && steps.label_check.outputs.label_check == 'success'
         run: cat ~/.backport/backport.debug.log

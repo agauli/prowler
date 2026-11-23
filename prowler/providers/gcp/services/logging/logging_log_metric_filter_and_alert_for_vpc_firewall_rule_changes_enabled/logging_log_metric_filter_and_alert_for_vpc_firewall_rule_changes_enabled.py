@@ -1,5 +1,8 @@
 from prowler.lib.check.models import Check, Check_Report_GCP
 from prowler.providers.gcp.services.logging.logging_client import logging_client
+from prowler.providers.gcp.services.logging.logging_service import (
+    get_projects_covered_by_aggregated_metric,
+)
 from prowler.providers.gcp.services.monitoring.monitoring_client import (
     monitoring_client,
 )
@@ -8,18 +11,17 @@ from prowler.providers.gcp.services.monitoring.monitoring_client import (
 class logging_log_metric_filter_and_alert_for_vpc_firewall_rule_changes_enabled(Check):
     def execute(self) -> Check_Report_GCP:
         findings = []
+        metric_filter = 'resource.type="gce_firewall_rule" AND (protoPayload.methodName:"compute.firewalls.patch" OR protoPayload.methodName:"compute.firewalls.insert" OR protoPayload.methodName:"compute.firewalls.delete")'
         projects_with_metric = set()
         for metric in logging_client.metrics:
-            if (
-                'resource.type="gce_firewall_rule" AND (protoPayload.methodName:"compute.firewalls.patch" OR protoPayload.methodName:"compute.firewalls.insert" OR protoPayload.methodName:"compute.firewalls.delete")'
-                in metric.filter
-            ):
-                report = Check_Report_GCP(self.metadata())
+            if metric_filter in metric.filter:
+                report = Check_Report_GCP(
+                    metadata=self.metadata(),
+                    resource=metric,
+                    location=logging_client.region,
+                    resource_name=metric.name if metric.name else "Log Metric Filter",
+                )
                 projects_with_metric.add(metric.project_id)
-                report.project_id = metric.project_id
-                report.resource_id = metric.name
-                report.resource_name = metric.name
-                report.location = logging_client.region
                 report.status = "FAIL"
                 report.status_extended = f"Log metric filter {metric.name} found but no alerts associated in project {metric.project_id}."
                 for alert_policy in monitoring_client.alert_policies:
@@ -30,15 +32,28 @@ class logging_log_metric_filter_and_alert_for_vpc_firewall_rule_changes_enabled(
                             break
                 findings.append(report)
 
+        centrally_covered = get_projects_covered_by_aggregated_metric(
+            logging_client, monitoring_client, metric_filter
+        )
         for project in logging_client.project_ids:
             if project not in projects_with_metric:
-                report = Check_Report_GCP(self.metadata())
-                report.project_id = project
-                report.resource_id = project
-                report.resource_name = ""
-                report.location = logging_client.region
-                report.status = "FAIL"
-                report.status_extended = f"There are no log metric filters or alerts associated in project {project}."
+                report = Check_Report_GCP(
+                    metadata=self.metadata(),
+                    resource=logging_client.projects[project],
+                    project_id=project,
+                    location=logging_client.region,
+                    resource_name=(
+                        logging_client.projects[project].name
+                        if logging_client.projects[project].name
+                        else "GCP Project"
+                    ),
+                )
+                if project in centrally_covered:
+                    report.status = "PASS"
+                    report.status_extended = f"Log metric filter {centrally_covered[project]} found with an alert, covering project {project} via an organization-level aggregated sink."
+                else:
+                    report.status = "FAIL"
+                    report.status_extended = f"There are no log metric filters or alerts associated in project {project}."
                 findings.append(report)
 
         return findings

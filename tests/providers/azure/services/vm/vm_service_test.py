@@ -1,15 +1,24 @@
-from unittest import mock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from azure.mgmt.compute.models import ManagedDiskParameters, OSDisk, StorageProfile
+import pytest
+from azure.mgmt.compute import models as compute_models
 
 from prowler.providers.azure.services.vm.vm_service import (
     Disk,
+    LinuxConfiguration,
+    ManagedDiskParameters,
+    OperatingSystemType,
+    OSDisk,
+    SecurityProfile,
+    StorageProfile,
+    UefiSettings,
     VirtualMachine,
     VirtualMachines,
 )
 from tests.providers.azure.azure_fixtures import (
     AZURE_SUBSCRIPTION_ID,
+    RESOURCE_GROUP,
+    RESOURCE_GROUP_LIST,
     set_mocked_azure_provider,
 )
 
@@ -21,21 +30,55 @@ def mock_vm_get_virtual_machines(_):
                 resource_id="/subscriptions/resource_id",
                 resource_name="VMTest",
                 location="location",
-                security_profile=mock.MagicMock(
+                security_profile=SecurityProfile(
                     security_type="TrustedLaunch",
-                    uefi_settings=mock.MagicMock(
+                    uefi_settings=UefiSettings(
                         secure_boot_enabled=True,
                         v_tpm_enabled=True,
                     ),
                 ),
+                extensions=[],
                 storage_profile=StorageProfile(
                     os_disk=OSDisk(
-                        create_option="FromImage",
+                        name="os_disk_name",
+                        operating_system_type=OperatingSystemType.LINUX,
                         managed_disk=ManagedDiskParameters(id="managed_disk_id"),
                     ),
                     data_disks=[],
                 ),
+                vm_size="Standard_A8_v2",
+                linux_configuration=None,
             )
+        }
+    }
+
+
+def mock_vm_get_virtual_machines_with_none(_):
+    return {
+        AZURE_SUBSCRIPTION_ID: {
+            "vm_id-1": VirtualMachine(
+                resource_id="/subscriptions/resource_id",
+                resource_name="VMWithNoneValues",
+                location="location",
+                security_profile=None,
+                extensions=[],
+                storage_profile=None,
+                vm_size=None,
+                linux_configuration=None,
+            ),
+            "vm_id-2": VirtualMachine(
+                resource_id="/subscriptions/resource_id2",
+                resource_name="VMWithPartialNone",
+                location="location",
+                security_profile=None,
+                extensions=[],
+                storage_profile=StorageProfile(
+                    os_disk=None,
+                    data_disks=[],
+                ),
+                vm_size="Standard_B1s",
+                linux_configuration=None,
+            ),
         }
     }
 
@@ -54,16 +97,174 @@ def mock_vm_get_disks(_):
     }
 
 
+def mock_vm_get_virtual_machines_with_linux(_):
+    return {
+        AZURE_SUBSCRIPTION_ID: {
+            "vm_id-linux": VirtualMachine(
+                resource_id="/subscriptions/resource_id_linux",
+                resource_name="LinuxVM",
+                location="location",
+                security_profile=None,
+                extensions=[],
+                storage_profile=None,
+                linux_configuration=LinuxConfiguration(
+                    disable_password_authentication=True
+                ),
+            )
+        }
+    }
+
+
+@pytest.fixture
+def vm_service_factory():
+    def _build(mock_client, resource_groups):
+        with (
+            patch.object(VirtualMachines, "_get_virtual_machines", return_value={}),
+            patch.object(VirtualMachines, "_get_disks", return_value={}),
+            patch.object(VirtualMachines, "_get_vm_scale_sets", return_value={}),
+        ):
+            vm_service = VirtualMachines(set_mocked_azure_provider())
+
+        vm_service.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        vm_service.resource_groups = resource_groups
+        return vm_service
+
+    return _build
+
+
+@pytest.mark.parametrize(
+    "resource_groups", [None, {AZURE_SUBSCRIPTION_ID: [RESOURCE_GROUP]}]
+)
+@pytest.mark.parametrize(
+    "flag",
+    ["disable_password_authentication", "secure_boot_enabled", "v_tpm_enabled"],
+)
+@pytest.mark.parametrize("value", ["omitted", None, False, True])
+def test_get_virtual_machines_nullable_security_flags(
+    vm_service_factory, resource_groups, flag, value
+):
+    linux_flags = {"disable_password_authentication": True}
+    uefi_flags = {"secure_boot_enabled": True, "v_tpm_enabled": True}
+    flags = linux_flags if flag == "disable_password_authentication" else uefi_flags
+    if value == "omitted":
+        flags.pop(flag)
+    else:
+        flags[flag] = value
+
+    vm = compute_models.VirtualMachine(
+        location="westeurope",
+        os_profile=compute_models.OSProfile(
+            linux_configuration=compute_models.LinuxConfiguration(**linux_flags)
+        ),
+        security_profile=compute_models.SecurityProfile(
+            security_type="TrustedLaunch",
+            uefi_settings=compute_models.UefiSettings(**uefi_flags),
+        ),
+    )
+    following_vm = compute_models.VirtualMachine(
+        location="westeurope",
+        os_profile=compute_models.OSProfile(
+            linux_configuration=compute_models.LinuxConfiguration(
+                disable_password_authentication=True
+            )
+        ),
+        security_profile=compute_models.SecurityProfile(
+            security_type="TrustedLaunch",
+            uefi_settings=compute_models.UefiSettings(
+                secure_boot_enabled=True, v_tpm_enabled=True
+            ),
+        ),
+    )
+    # The SDK fills read-only resource metadata when deserializing API responses.
+    for sdk_vm, name in [(vm, "nullable-vm"), (following_vm, "following-vm")]:
+        sdk_vm.id = f"/subscriptions/{AZURE_SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Compute/virtualMachines/{name}"
+        sdk_vm.name = name
+
+    mock_client = MagicMock()
+    mock_client.virtual_machines.list_all.return_value = [vm, following_vm]
+    mock_client.virtual_machines.list.return_value = [vm, following_vm]
+    service = vm_service_factory(mock_client, resource_groups)
+    service.virtual_machines = service._get_virtual_machines()
+
+    machines = service.virtual_machines[AZURE_SUBSCRIPTION_ID]
+    assert list(machines) == [vm.id, following_vm.id]
+    assert machines[vm.id].resource_name == vm.name
+    assert machines[vm.id].location == vm.location
+    if resource_groups:
+        mock_client.virtual_machines.list.assert_called_once_with(
+            resource_group_name=RESOURCE_GROUP
+        )
+        mock_client.virtual_machines.list_all.assert_not_called()
+    else:
+        mock_client.virtual_machines.list_all.assert_called_once_with()
+        mock_client.virtual_machines.list.assert_not_called()
+
+    expected_enabled = value is True
+    if flag == "disable_password_authentication":
+        assert (
+            machines[vm.id].linux_configuration.disable_password_authentication
+            is expected_enabled
+        )
+        assert (
+            machines[
+                following_vm.id
+            ].linux_configuration.disable_password_authentication
+            is True
+        )
+        with (
+            patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            patch(
+                "prowler.providers.azure.services.vm.vm_linux_enforce_ssh_authentication.vm_linux_enforce_ssh_authentication.vm_client",
+                new=service,
+            ),
+        ):
+            from prowler.providers.azure.services.vm.vm_linux_enforce_ssh_authentication.vm_linux_enforce_ssh_authentication import (
+                vm_linux_enforce_ssh_authentication,
+            )
+
+            findings = vm_linux_enforce_ssh_authentication().execute()
+    else:
+        assert (
+            getattr(machines[vm.id].security_profile.uefi_settings, flag)
+            is expected_enabled
+        )
+        assert getattr(machines[following_vm.id].security_profile.uefi_settings, flag)
+        with (
+            patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            patch(
+                "prowler.providers.azure.services.vm.vm_trusted_launch_enabled.vm_trusted_launch_enabled.vm_client",
+                new=service,
+            ),
+        ):
+            from prowler.providers.azure.services.vm.vm_trusted_launch_enabled.vm_trusted_launch_enabled import (
+                vm_trusted_launch_enabled,
+            )
+
+            findings = vm_trusted_launch_enabled().execute()
+
+    assert [finding.resource_id for finding in findings] == [vm.id, following_vm.id]
+    assert [finding.status for finding in findings] == [
+        "PASS" if expected_enabled else "FAIL",
+        "PASS",
+    ]
+
+
 @patch(
-    "prowler.providers.azure.services.vm.vm_service.VirtualMachines.__get_virtual_machines__",
+    "prowler.providers.azure.services.vm.vm_service.VirtualMachines._get_virtual_machines",
     new=mock_vm_get_virtual_machines,
 )
 @patch(
-    "prowler.providers.azure.services.vm.vm_service.VirtualMachines.__get_disks__",
+    "prowler.providers.azure.services.vm.vm_service.VirtualMachines._get_disks",
     new=mock_vm_get_disks,
 )
-class Test_AppInsights_Service:
-    def test__get_client__(self):
+class Test_VirtualMachines_Service:
+    def test_get_client(self):
         app_insights = VirtualMachines(set_mocked_azure_provider())
         assert (
             app_insights.clients[AZURE_SUBSCRIPTION_ID].__class__.__name__
@@ -124,6 +325,10 @@ class Test_AppInsights_Service:
             )
             == 0
         )
+        assert (
+            virtual_machines.virtual_machines[AZURE_SUBSCRIPTION_ID]["vm_id-1"].vm_size
+            == "Standard_A8_v2"
+        )
 
     def test__get_disks(self):
         disks = VirtualMachines(set_mocked_azure_provider()).disks
@@ -135,4 +340,498 @@ class Test_AppInsights_Service:
         assert (
             disks[AZURE_SUBSCRIPTION_ID]["disk_id-1"].encryption_type
             == "EncryptionAtRestWithPlatformKey"
+        )
+
+
+@patch(
+    "prowler.providers.azure.services.vm.vm_service.VirtualMachines._get_virtual_machines",
+    new=mock_vm_get_virtual_machines_with_none,
+)
+class Test_VirtualMachines_NoneCases:
+    def test_virtual_machine_with_none_storage_profile(self):
+        virtual_machines = VirtualMachines(set_mocked_azure_provider())
+        vm_1 = virtual_machines.virtual_machines[AZURE_SUBSCRIPTION_ID]["vm_id-1"]
+        assert vm_1.storage_profile is None
+        assert vm_1.resource_name == "VMWithNoneValues"
+
+    def test_virtual_machine_with_partial_none_storage_profile(self):
+        virtual_machines = VirtualMachines(set_mocked_azure_provider())
+        vm_2 = virtual_machines.virtual_machines[AZURE_SUBSCRIPTION_ID]["vm_id-2"]
+        assert vm_2.storage_profile.os_disk is None
+        assert vm_2.storage_profile.data_disks == []
+        assert vm_2.resource_name == "VMWithPartialNone"
+
+
+@patch(
+    "prowler.providers.azure.services.vm.vm_service.VirtualMachines._get_virtual_machines",
+    new=mock_vm_get_virtual_machines_with_linux,
+)
+def test_virtual_machine_with_linux_configuration():
+    virtual_machines = VirtualMachines(set_mocked_azure_provider())
+    vm = virtual_machines.virtual_machines[AZURE_SUBSCRIPTION_ID]["vm_id-linux"]
+    assert vm.linux_configuration is not None
+    assert vm.linux_configuration.disable_password_authentication is True
+
+
+class Test_VirtualMachine_SecurityProfile_Validation:
+    """Test VirtualMachine SecurityProfile Pydantic validation"""
+
+    def test_security_profile_with_all_fields(self):
+        """Test that SecurityProfile with all fields validates correctly"""
+        vm = VirtualMachine(
+            resource_id="/subscriptions/test/vm1",
+            resource_name="test-vm",
+            location="eastus",
+            security_profile=SecurityProfile(
+                security_type="TrustedLaunch",
+                uefi_settings=UefiSettings(
+                    secure_boot_enabled=True,
+                    v_tpm_enabled=True,
+                ),
+            ),
+            extensions=[],
+        )
+
+        assert vm.security_profile is not None
+        assert vm.security_profile.security_type == "TrustedLaunch"
+        assert vm.security_profile.uefi_settings is not None
+        assert vm.security_profile.uefi_settings.secure_boot_enabled is True
+        assert vm.security_profile.uefi_settings.v_tpm_enabled is True
+
+    def test_security_profile_with_none_uefi_settings(self):
+        """Test that SecurityProfile with None uefi_settings validates correctly"""
+        vm = VirtualMachine(
+            resource_id="/subscriptions/test/vm2",
+            resource_name="test-vm-2",
+            location="westus",
+            security_profile=SecurityProfile(
+                security_type="Standard",
+                uefi_settings=None,
+            ),
+            extensions=[],
+        )
+
+        assert vm.security_profile is not None
+        assert vm.security_profile.security_type == "Standard"
+        assert vm.security_profile.uefi_settings is None
+
+    def test_security_profile_with_none_security_type(self):
+        """Test that SecurityProfile with None security_type validates correctly"""
+        vm = VirtualMachine(
+            resource_id="/subscriptions/test/vm3",
+            resource_name="test-vm-3",
+            location="northeurope",
+            security_profile=SecurityProfile(
+                security_type=None,
+                uefi_settings=UefiSettings(
+                    secure_boot_enabled=False,
+                    v_tpm_enabled=False,
+                ),
+            ),
+            extensions=[],
+        )
+
+        assert vm.security_profile is not None
+        assert vm.security_profile.security_type is None
+        assert vm.security_profile.uefi_settings is not None
+        assert vm.security_profile.uefi_settings.secure_boot_enabled is False
+
+    def test_security_profile_with_all_none(self):
+        """Test that SecurityProfile with all None values validates correctly"""
+        vm = VirtualMachine(
+            resource_id="/subscriptions/test/vm4",
+            resource_name="test-vm-4",
+            location="southeastasia",
+            security_profile=SecurityProfile(
+                security_type=None,
+                uefi_settings=None,
+            ),
+            extensions=[],
+        )
+
+        assert vm.security_profile is not None
+        assert vm.security_profile.security_type is None
+        assert vm.security_profile.uefi_settings is None
+
+    def test_virtual_machine_with_none_security_profile(self):
+        """Test that VirtualMachine with None security_profile validates correctly"""
+        vm = VirtualMachine(
+            resource_id="/subscriptions/test/vm5",
+            resource_name="test-vm-5",
+            location="japaneast",
+            security_profile=None,
+            extensions=[],
+        )
+
+        assert vm.security_profile is None
+
+    def test_security_profile_creation_from_azure_sdk_simulation(self):
+        """
+        Test that SecurityProfile can be created from Azure SDK-like objects
+        This simulates the conversion that happens in _get_virtual_machines
+        """
+        # Simulate Azure SDK SecurityProfile object
+        mock_azure_security_profile = MagicMock()
+        mock_azure_security_profile.security_type = "TrustedLaunch"
+
+        mock_azure_uefi_settings = MagicMock()
+        mock_azure_uefi_settings.secure_boot_enabled = True
+        mock_azure_uefi_settings.v_tpm_enabled = True
+
+        # Simulate the conversion that happens in the service
+        security_type = getattr(mock_azure_security_profile, "security_type", None)
+        uefi_settings = UefiSettings(
+            secure_boot_enabled=getattr(
+                mock_azure_uefi_settings, "secure_boot_enabled", False
+            ),
+            v_tpm_enabled=getattr(mock_azure_uefi_settings, "v_tpm_enabled", False),
+        )
+        security_profile = SecurityProfile(
+            security_type=security_type,
+            uefi_settings=uefi_settings,
+        )
+
+        # Create VirtualMachine with converted SecurityProfile
+        vm = VirtualMachine(
+            resource_id="/subscriptions/test/vm6",
+            resource_name="test-vm-6",
+            location="uksouth",
+            security_profile=security_profile,
+            extensions=[],
+        )
+
+        # Verify no ValidationError is raised and data is correct
+        assert vm.security_profile is not None
+        assert vm.security_profile.security_type == "TrustedLaunch"
+        assert vm.security_profile.uefi_settings.secure_boot_enabled is True
+        assert vm.security_profile.uefi_settings.v_tpm_enabled is True
+
+    def test_security_profile_with_dict_input(self):
+        """Test that SecurityProfile can be created from dictionary (Pydantic feature)"""
+        vm = VirtualMachine(
+            resource_id="/subscriptions/test/vm7",
+            resource_name="test-vm-7",
+            location="canadacentral",
+            security_profile={
+                "security_type": "ConfidentialVM",
+                "uefi_settings": {
+                    "secure_boot_enabled": True,
+                    "v_tpm_enabled": True,
+                },
+            },
+            extensions=[],
+        )
+
+        assert vm.security_profile is not None
+        assert vm.security_profile.security_type == "ConfidentialVM"
+        assert vm.security_profile.uefi_settings.secure_boot_enabled is True
+
+    def test_uefi_settings_boolean_values(self):
+        """Test that UefiSettings properly handles boolean values"""
+        uefi_true = UefiSettings(secure_boot_enabled=True, v_tpm_enabled=True)
+        assert uefi_true.secure_boot_enabled is True
+        assert uefi_true.v_tpm_enabled is True
+
+        uefi_false = UefiSettings(secure_boot_enabled=False, v_tpm_enabled=False)
+        assert uefi_false.secure_boot_enabled is False
+        assert uefi_false.v_tpm_enabled is False
+
+        uefi_mixed = UefiSettings(secure_boot_enabled=True, v_tpm_enabled=False)
+        assert uefi_mixed.secure_boot_enabled is True
+        assert uefi_mixed.v_tpm_enabled is False
+
+    def test_security_profile_full_service_simulation(self):
+        """
+        Full integration test simulating the complete VM service flow
+        This tests the actual scenario where Azure SDK objects are converted
+        """
+
+        def mock_list_vms(*_args, **_kwargs):
+            # Simulate Azure SDK VM object with security_profile
+            mock_vm = MagicMock()
+            mock_vm.id = "/subscriptions/test/resourceGroups/test-rg/providers/Microsoft.Compute/virtualMachines/test-vm"
+            mock_vm.name = "test-vm-full-sim"
+            mock_vm.location = "eastus"
+
+            # Simulate Azure SDK SecurityProfile (this was causing the ValidationError)
+            mock_security_profile = MagicMock()
+            mock_security_profile.security_type = "TrustedLaunch"
+
+            mock_uefi_settings = MagicMock()
+            mock_uefi_settings.secure_boot_enabled = True
+            mock_uefi_settings.v_tpm_enabled = True
+            mock_security_profile.uefi_settings = mock_uefi_settings
+
+            mock_vm.security_profile = mock_security_profile
+            mock_vm.resources = []
+            mock_vm.storage_profile = None
+            mock_vm.hardware_profile = None
+            mock_vm.os_profile = None
+
+            return [mock_vm]
+
+        # Create mock client with properly configured virtual_machines attribute
+        mock_client = MagicMock()
+        # Explicitly create virtual_machines as a MagicMock to ensure it has list_all method
+        # This prevents AttributeError in GitHub Actions where it might be a dict
+        mock_client.virtual_machines = MagicMock()
+        mock_client.virtual_machines.list_all.side_effect = mock_list_vms
+
+        with (
+            patch.object(VirtualMachines, "_get_disks", return_value={}),
+            patch.object(VirtualMachines, "_get_vm_scale_sets", return_value={}),
+            patch.object(VirtualMachines, "_get_virtual_machines", return_value={}),
+        ):
+            vm_service = VirtualMachines(set_mocked_azure_provider())
+            # Replace the client with our mocked one
+            vm_service.clients[AZURE_SUBSCRIPTION_ID] = mock_client
+
+        # Now call _get_virtual_machines with the mocked client (patch is removed)
+        # This simulates the actual service flow
+        virtual_machines = vm_service._get_virtual_machines()
+
+        # Verify VM was created successfully without ValidationError
+        assert len(virtual_machines[AZURE_SUBSCRIPTION_ID]) == 1
+
+        vm_id = list(virtual_machines[AZURE_SUBSCRIPTION_ID].keys())[0]
+        vm = virtual_machines[AZURE_SUBSCRIPTION_ID][vm_id]
+
+        # Verify the VM object is valid
+        assert vm.resource_name == "test-vm-full-sim"
+        assert vm.location == "eastus"
+
+        # Verify SecurityProfile was converted correctly (not Azure SDK object)
+        assert vm.security_profile is not None
+        assert isinstance(vm.security_profile, SecurityProfile)
+        assert vm.security_profile.security_type == "TrustedLaunch"
+
+        # Verify UefiSettings was converted correctly
+        assert vm.security_profile.uefi_settings is not None
+        assert isinstance(vm.security_profile.uefi_settings, UefiSettings)
+        assert vm.security_profile.uefi_settings.secure_boot_enabled is True
+        assert vm.security_profile.uefi_settings.v_tpm_enabled is True
+
+
+class Test_VM_get_virtual_machines:
+    def test_get_virtual_machines_no_resource_groups(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.virtual_machines = MagicMock()
+        mock_client.virtual_machines.list_all.return_value = []
+
+        vm_service = vm_service_factory(mock_client, None)
+
+        result = vm_service._get_virtual_machines()
+
+        mock_client.virtual_machines.list_all.assert_called_once()
+        mock_client.virtual_machines.list.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_virtual_machines_with_resource_group(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.virtual_machines = MagicMock()
+        mock_client.virtual_machines.list.return_value = []
+
+        vm_service = vm_service_factory(
+            mock_client, {AZURE_SUBSCRIPTION_ID: [RESOURCE_GROUP]}
+        )
+
+        result = vm_service._get_virtual_machines()
+
+        mock_client.virtual_machines.list.assert_called_once_with(
+            resource_group_name=RESOURCE_GROUP
+        )
+        mock_client.virtual_machines.list_all.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_virtual_machines_empty_resource_group_for_subscription(
+        self, vm_service_factory
+    ):
+        mock_client = MagicMock()
+        mock_client.virtual_machines = MagicMock()
+
+        vm_service = vm_service_factory(mock_client, {AZURE_SUBSCRIPTION_ID: []})
+
+        result = vm_service._get_virtual_machines()
+
+        mock_client.virtual_machines.list.assert_not_called()
+        mock_client.virtual_machines.list_all.assert_not_called()
+        assert result[AZURE_SUBSCRIPTION_ID] == {}
+
+    def test_get_virtual_machines_with_multiple_resource_groups(
+        self, vm_service_factory
+    ):
+        mock_client = MagicMock()
+        mock_client.virtual_machines = MagicMock()
+        mock_client.virtual_machines.list.return_value = []
+
+        vm_service = vm_service_factory(
+            mock_client, {AZURE_SUBSCRIPTION_ID: RESOURCE_GROUP_LIST}
+        )
+
+        result = vm_service._get_virtual_machines()
+
+        assert mock_client.virtual_machines.list.call_count == 2
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_virtual_machines_with_mixed_case_resource_group(
+        self, vm_service_factory
+    ):
+        mock_client = MagicMock()
+        mock_client.virtual_machines = MagicMock()
+        mock_client.virtual_machines.list.return_value = []
+
+        vm_service = vm_service_factory(mock_client, {AZURE_SUBSCRIPTION_ID: ["RG"]})
+
+        vm_service._get_virtual_machines()
+
+        mock_client.virtual_machines.list.assert_called_once_with(
+            resource_group_name="RG"
+        )
+
+
+class Test_VM_get_disks:
+    def test_get_disks_no_resource_groups(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.disks = MagicMock()
+        mock_client.disks.list.return_value = []
+
+        vm_service = vm_service_factory(mock_client, None)
+
+        result = vm_service._get_disks()
+
+        mock_client.disks.list.assert_called_once()
+        mock_client.disks.list_by_resource_group.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_disks_with_resource_group(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.disks = MagicMock()
+        mock_client.disks.list_by_resource_group.return_value = []
+
+        vm_service = vm_service_factory(
+            mock_client, {AZURE_SUBSCRIPTION_ID: [RESOURCE_GROUP]}
+        )
+
+        result = vm_service._get_disks()
+
+        mock_client.disks.list_by_resource_group.assert_called_once_with(
+            resource_group_name=RESOURCE_GROUP
+        )
+        mock_client.disks.list.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_disks_empty_resource_group_for_subscription(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.disks = MagicMock()
+
+        vm_service = vm_service_factory(mock_client, {AZURE_SUBSCRIPTION_ID: []})
+
+        result = vm_service._get_disks()
+
+        mock_client.disks.list_by_resource_group.assert_not_called()
+        mock_client.disks.list.assert_not_called()
+        assert result[AZURE_SUBSCRIPTION_ID] == {}
+
+
+class Test_VM_get_vm_scale_sets:
+    def test_get_vm_scale_sets_no_resource_groups(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.virtual_machine_scale_sets = MagicMock()
+        mock_client.virtual_machine_scale_sets.list_all.return_value = []
+
+        vm_service = vm_service_factory(mock_client, None)
+
+        result = vm_service._get_vm_scale_sets()
+
+        mock_client.virtual_machine_scale_sets.list_all.assert_called_once()
+        mock_client.virtual_machine_scale_sets.list.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_vm_scale_sets_with_resource_group(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.virtual_machine_scale_sets = MagicMock()
+        mock_client.virtual_machine_scale_sets.list.return_value = []
+
+        vm_service = vm_service_factory(
+            mock_client, {AZURE_SUBSCRIPTION_ID: [RESOURCE_GROUP]}
+        )
+
+        result = vm_service._get_vm_scale_sets()
+
+        mock_client.virtual_machine_scale_sets.list.assert_called_once_with(
+            resource_group_name=RESOURCE_GROUP
+        )
+        mock_client.virtual_machine_scale_sets.list_all.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_vm_scale_sets_empty_resource_group_for_subscription(
+        self, vm_service_factory
+    ):
+        mock_client = MagicMock()
+        mock_client.virtual_machine_scale_sets = MagicMock()
+
+        vm_service = vm_service_factory(mock_client, {AZURE_SUBSCRIPTION_ID: []})
+
+        result = vm_service._get_vm_scale_sets()
+
+        mock_client.virtual_machine_scale_sets.list.assert_not_called()
+        mock_client.virtual_machine_scale_sets.list_all.assert_not_called()
+        assert result[AZURE_SUBSCRIPTION_ID] == {}
+
+
+class Test_VM_get_disks_extra:
+    def test_get_disks_with_multiple_resource_groups(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.disks = MagicMock()
+        mock_client.disks.list_by_resource_group.return_value = []
+
+        vm_service = vm_service_factory(
+            mock_client, {AZURE_SUBSCRIPTION_ID: RESOURCE_GROUP_LIST}
+        )
+
+        result = vm_service._get_disks()
+
+        assert mock_client.disks.list_by_resource_group.call_count == 2
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_disks_with_mixed_case_resource_group(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.disks = MagicMock()
+        mock_client.disks.list_by_resource_group.return_value = []
+
+        vm_service = vm_service_factory(mock_client, {AZURE_SUBSCRIPTION_ID: ["RG"]})
+
+        vm_service._get_disks()
+
+        mock_client.disks.list_by_resource_group.assert_called_once_with(
+            resource_group_name="RG"
+        )
+
+
+class Test_VM_get_vm_scale_sets_extra:
+    def test_get_vm_scale_sets_with_multiple_resource_groups(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.virtual_machine_scale_sets = MagicMock()
+        mock_client.virtual_machine_scale_sets.list.return_value = []
+
+        vm_service = vm_service_factory(
+            mock_client, {AZURE_SUBSCRIPTION_ID: RESOURCE_GROUP_LIST}
+        )
+
+        result = vm_service._get_vm_scale_sets()
+
+        assert mock_client.virtual_machine_scale_sets.list.call_count == 2
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_vm_scale_sets_with_mixed_case_resource_group(self, vm_service_factory):
+        mock_client = MagicMock()
+        mock_client.virtual_machine_scale_sets = MagicMock()
+        mock_client.virtual_machine_scale_sets.list.return_value = []
+
+        vm_service = vm_service_factory(mock_client, {AZURE_SUBSCRIPTION_ID: ["RG"]})
+
+        vm_service._get_vm_scale_sets()
+
+        mock_client.virtual_machine_scale_sets.list.assert_called_once_with(
+            resource_group_name="RG"
         )

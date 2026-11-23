@@ -6,18 +6,21 @@ class defender_ensure_defender_for_databases_is_on(Check):
     def execute(self) -> Check_Report_Azure:
         findings = []
         for subscription, pricings in defender_client.pricings.items():
+            subscription_name = defender_client.subscriptions.get(
+                subscription, subscription
+            )
             if (
                 "SqlServers" in pricings
                 and "SqlServerVirtualMachines" in pricings
                 and "OpenSourceRelationalDatabases" in pricings
                 and "CosmosDbs" in pricings
             ):
-                report = Check_Report_Azure(self.metadata())
-                report.resource_name = "Defender plan Databases"
+                report = Check_Report_Azure(
+                    metadata=self.metadata(), resource=pricings["SqlServers"]
+                )
                 report.subscription = subscription
-                report.resource_id = pricings["SqlServers"].resource_id
                 report.status = "PASS"
-                report.status_extended = f"Defender plan Defender for Databases from subscription {subscription} is set to ON (pricing tier standard)."
+                report.status_extended = f"Defender plan Defender for Databases from subscription {subscription_name} ({subscription}) is set to ON (pricing tier standard)."
                 if (
                     pricings["SqlServers"].pricing_tier != "Standard"
                     or pricings["SqlServerVirtualMachines"].pricing_tier != "Standard"
@@ -26,7 +29,7 @@ class defender_ensure_defender_for_databases_is_on(Check):
                     or pricings["CosmosDbs"].pricing_tier != "Standard"
                 ):
                     report.status = "FAIL"
-                    report.status_extended = f"Defender plan Defender for Databases from subscription {subscription} is set to OFF (pricing tier not standard)."
+                    report.status_extended = f"Defender plan Defender for Databases from subscription {subscription_name} ({subscription}) is set to OFF (pricing tier not standard)."
 
                 findings.append(report)
         return findings

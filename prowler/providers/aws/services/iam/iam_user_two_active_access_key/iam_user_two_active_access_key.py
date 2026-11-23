@@ -5,14 +5,19 @@ from prowler.providers.aws.services.iam.iam_client import iam_client
 
 class iam_user_two_active_access_key(Check):
     def execute(self) -> Check_Report_AWS:
+        findings = []
         try:
-            findings = []
             response = iam_client.credential_report
             for user in response:
-                report = Check_Report_AWS(self.metadata())
+                report = Check_Report_AWS(metadata=self.metadata(), resource=user)
                 report.resource_id = user["user"]
                 report.resource_arn = user["arn"]
                 report.region = iam_client.region
+                # Search user in iam_client.users to get tags
+                for iam_user in iam_client.users:
+                    if iam_user.arn == user["arn"]:
+                        report.resource_tags = iam_user.tags
+                        break
                 if (
                     user["access_key_1_active"] == "true"
                     and user["access_key_2_active"] == "true"
@@ -29,5 +34,4 @@ class iam_user_two_active_access_key(Check):
                 findings.append(report)
         except Exception as error:
             logger.error(f"{error.__class__.__name__} -- {error}")
-        finally:
-            return findings
+        return findings

@@ -1,16 +1,24 @@
+import socket
 from argparse import Namespace
-from os import rmdir
 from unittest.mock import patch
+
+import pytest
+import yaml
+from kubernetes.config.config_exception import ConfigException
 
 from kubernetes import client
 from prowler.config.config import (
     default_config_file_path,
     default_fixer_config_file_path,
+    load_and_validate_config_file,
+)
+from prowler.providers.kubernetes.exceptions.exceptions import (
+    KubernetesKubeConfigServerNotAllowedError,
+    KubernetesSetUpSessionError,
 )
 from prowler.providers.kubernetes.kubernetes_provider import KubernetesProvider
 from prowler.providers.kubernetes.models import (
     KubernetesIdentityInfo,
-    KubernetesOutputOptions,
     KubernetesSession,
 )
 from tests.providers.kubernetes.kubernetes_fixtures import KUBERNETES_CONFIG
@@ -24,6 +32,35 @@ def mock_get_context_user_roles(*_):
     return []
 
 
+@pytest.fixture(autouse=True)
+def _default_dns_resolves_public(monkeypatch):
+    """Resolve every kubeconfig host to a public IP so the guard never hits real DNS."""
+
+    def _stub(_host, *_a, **_kw):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", 0))]
+
+    monkeypatch.setattr("prowler.lib.network.ssrf.socket.getaddrinfo", _stub)
+
+
+def build_kubeconfig(servers: list) -> dict:
+    return {
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [
+            {"cluster": {"server": server}, "name": f"cluster-{index}"}
+            for index, server in enumerate(servers)
+        ],
+        "contexts": [
+            {
+                "context": {"cluster": "cluster-0", "user": "example-user"},
+                "name": "example-context",
+            }
+        ],
+        "current-context": "example-context",
+        "users": [{"name": "example-user", "user": {"token": "EXAMPLE_TOKEN"}}],
+    }
+
+
 class TestKubernetesProvider:
     def test_kubernetes_provider_no_namespaces(
         self,
@@ -35,26 +72,36 @@ class TestKubernetesProvider:
                 "cluster": "test-cluster",
             },
         }
-        with patch(
-            "prowler.providers.kubernetes.kubernetes_provider.KubernetesProvider.setup_session",
-            return_value=KubernetesSession(
-                api_client=client.ApiClient,
-                context=context,
+        with (
+            patch(
+                "prowler.providers.kubernetes.kubernetes_provider.KubernetesProvider.setup_session",
+                return_value=KubernetesSession(
+                    api_client=client.ApiClient,
+                    context=context,
+                ),
             ),
-        ), patch(
-            "prowler.providers.kubernetes.kubernetes_provider.KubernetesProvider.get_all_namespaces",
-            return_value=["namespace-1"],
+            patch(
+                "prowler.providers.kubernetes.kubernetes_provider.KubernetesProvider.get_all_namespaces",
+                return_value=["namespace-1"],
+            ),
         ):
             arguments = Namespace()
             arguments.kubeconfig_file = "dummy_path"
             arguments.context = None
             arguments.only_logs = False
             arguments.namespace = None
-            arguments.config_file = default_config_file_path
-            arguments.fixer_config = default_fixer_config_file_path
+            fixer_config = load_and_validate_config_file(
+                "kubernetes", default_fixer_config_file_path
+            )
 
             # Instantiate the KubernetesProvider with mocked arguments
-            kubernetes_provider = KubernetesProvider(arguments)
+            kubernetes_provider = KubernetesProvider(
+                arguments.kubeconfig_file,
+                arguments.context,
+                arguments.namespace,
+                config_path=default_config_file_path,
+                fixer_config=fixer_config,
+            )
             assert isinstance(kubernetes_provider.session, KubernetesSession)
             assert kubernetes_provider.session.api_client is not None
             assert kubernetes_provider.session.context == {
@@ -69,182 +116,697 @@ class TestKubernetesProvider:
 
             assert kubernetes_provider.audit_config == KUBERNETES_CONFIG
 
-    def test_set_provider_output_options_kubernetes(self):
-        arguments = Namespace()
-        arguments.kubeconfig_file = "dummy_path"
-        arguments.context = None
-        arguments.only_logs = False
-        arguments.namespace = None
-        arguments.config_file = default_config_file_path
-        arguments.fixer_config = default_fixer_config_file_path
-        arguments.status = []
-        arguments.output_formats = ["csv"]
-        arguments.output_directory = "output_test_directory"
-        arguments.verbose = True
-        arguments.output_filename = "output_test_filename"
-        arguments.only_logs = False
-        arguments.unix_timestamp = False
-        arguments.shodan = "test-api-key"
+    @patch(
+        "prowler.providers.kubernetes.kubernetes_provider.client.CoreV1Api.list_namespace"
+    )
+    @patch("kubernetes.config.list_kube_config_contexts")
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_kubernetes_test_connection_with_kubeconfig_content(
+        self,
+        mock_load_kube_config_from_dict,
+        mock_list_kube_config_contexts,
+        mock_list_namespace,
+    ):
+        mock_load_kube_config_from_dict.return_value = None
+        mock_list_kube_config_contexts.return_value = (
+            [
+                {
+                    "name": "example-context",
+                    "context": {
+                        "cluster": "example-cluster",
+                        "user": "example-user",
+                    },
+                }
+            ],
+            None,
+        )
+        mock_list_namespace.return_value.items = [
+            client.V1Namespace(metadata=client.V1ObjectMeta(name="namespace-1")),
+        ]
 
-        context = {
-            "name": "test-context",
+        kubeconfig_content = '{"apiVersion": "v1", "clusters": [{"cluster": {"server": "https://kubernetes.example.com"}, "name": "example-cluster"}], "contexts": [{"context": {"cluster": "example-cluster", "user": "example-user"}, "name": "example-context"}], "current-context": "example-context", "kind": "Config", "preferences": {}, "users": [{"name": "example-user", "user": {"token": "EXAMPLE_TOKEN"}}]}'
+
+        connection = KubernetesProvider.test_connection(
+            kubeconfig_file=None,
+            kubeconfig_content=kubeconfig_content,
+            provider_id="example-context",
+            raise_on_exception=False,
+        )
+
+        assert connection.is_connected
+        assert connection.error is None
+
+    @patch(
+        "prowler.providers.kubernetes.kubernetes_provider.client.CoreV1Api.list_namespace"
+    )
+    @patch("kubernetes.config.list_kube_config_contexts")
+    @patch("kubernetes.config.load_kube_config")
+    def test_kubernetes_test_connection_with_kubeconfig_file(
+        self, mock_load_kube_config, mock_list_kube_config_contexts, mock_list_namespace
+    ):
+        mock_load_kube_config.return_value = None
+        mock_list_kube_config_contexts.return_value = (
+            [
+                {
+                    "name": "test-context",
+                    "context": {
+                        "cluster": "test-cluster",
+                        "user": "test-user",
+                    },
+                }
+            ],
+            None,
+        )
+        mock_list_namespace.return_value.items = [
+            client.V1Namespace(metadata=client.V1ObjectMeta(name="namespace-1")),
+        ]
+
+        connection = KubernetesProvider.test_connection(
+            kubeconfig_file="dummy_kubeconfig_path",
+            kubeconfig_content="",
+            provider_id="test-context",
+            raise_on_exception=False,
+        )
+
+        assert connection.is_connected
+        assert connection.error is None
+
+    @patch(
+        "prowler.providers.kubernetes.kubernetes_provider.client.CoreV1Api.list_namespaced_pod"
+    )
+    @patch("kubernetes.config.list_kube_config_contexts")
+    @patch("kubernetes.config.load_kube_config")
+    def test_kubernetes_test_connection_with_namespace_input(
+        self,
+        mock_load_kube_config,
+        mock_list_kube_config_contexts,
+        mock_list_namespaced_pod,
+    ):
+        mock_load_kube_config.return_value = None
+        mock_list_kube_config_contexts.return_value = (
+            [
+                {
+                    "name": "test-context",
+                    "context": {
+                        "cluster": "test-cluster",
+                        "user": "test-user",
+                    },
+                }
+            ],
+            None,
+        )
+        mock_list_namespaced_pod.return_value.items = [
+            client.V1Pod(metadata=client.V1ObjectMeta(name="pod-1")),
+        ]
+
+        connection = KubernetesProvider.test_connection(
+            kubeconfig_file="",
+            kubeconfig_content="",
+            namespace="test-namespace",
+            provider_id="test-context",
+            raise_on_exception=False,
+        )
+
+        assert connection.is_connected
+        assert connection.error is None
+
+    @patch(
+        "prowler.providers.kubernetes.kubernetes_provider.client.CoreV1Api.list_namespace"
+    )
+    @patch("kubernetes.config.list_kube_config_contexts")
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_kubernetes_test_connection_with_kubeconfig_content_invalid_provider_id(
+        self,
+        mock_load_kube_config_from_dict,
+        mock_list_kube_config_contexts,
+        mock_list_namespace,
+    ):
+        mock_load_kube_config_from_dict.return_value = None
+        mock_list_kube_config_contexts.return_value = (
+            [
+                {
+                    "name": "example-context",
+                    "context": {
+                        "cluster": "example-cluster",
+                        "user": "example-user",
+                    },
+                }
+            ],
+            None,
+        )
+        mock_list_namespace.return_value.items = [
+            client.V1Namespace(metadata=client.V1ObjectMeta(name="namespace-1")),
+        ]
+
+        kubeconfig_content = {
+            "apiVersion": "v1",
+            "clusters": [
+                {
+                    "cluster": {
+                        "server": "https://kubernetes.example.com",
+                    },
+                    "name": "example-cluster",
+                }
+            ],
+            "contexts": [
+                {
+                    "context": {
+                        "cluster": "example-cluster",
+                        "user": "example-user",
+                    },
+                    "name": "example-context",
+                }
+            ],
+            "current-context": "example-context",
+            "kind": "Config",
+            "preferences": {},
+            "users": [
+                {
+                    "name": "example-user",
+                    "user": {
+                        "token": "EXAMPLE_TOKEN",
+                    },
+                }
+            ],
+        }
+
+        connection = KubernetesProvider.test_connection(
+            kubeconfig_file=None,
+            kubeconfig_content=kubeconfig_content,
+            provider_id="example-context-invalid",
+            raise_on_exception=False,
+        )
+
+        assert not connection.is_connected
+        assert connection.error is not None
+        assert isinstance(connection.error, KubernetesSetUpSessionError)
+
+    @patch(
+        "prowler.providers.kubernetes.kubernetes_provider.client.CoreV1Api.list_namespace"
+    )
+    @patch("kubernetes.config.list_kube_config_contexts")
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_kubernetes_test_connection_with_kubeconfig_content_valid_provider_id(
+        self,
+        mock_load_kube_config_from_dict,
+        mock_list_kube_config_contexts,
+        mock_list_namespace,
+    ):
+        mock_load_kube_config_from_dict.return_value = None
+        mock_list_kube_config_contexts.return_value = (
+            [
+                {
+                    "name": "example-context",
+                    "context": {
+                        "cluster": "example-cluster",
+                        "user": "example-user",
+                    },
+                }
+            ],
+            None,
+        )
+        mock_list_namespace.return_value.items = [
+            client.V1Namespace(metadata=client.V1ObjectMeta(name="namespace-1")),
+        ]
+
+        kubeconfig_content = '{"apiVersion": "v1", "clusters": [{"cluster": {"server": "https://kubernetes.example.com"}, "name": "example-cluster"}], "contexts": [{"context": {"cluster": "example-cluster", "user": "example-user"}, "name": "example-context"}], "current-context": "example-context", "kind": "Config", "preferences": {}, "users": [{"name": "example-user", "user": {"token": "EXAMPLE_TOKEN"}}]}'
+
+        connection = KubernetesProvider.test_connection(
+            kubeconfig_file=None,
+            kubeconfig_content=kubeconfig_content,
+            provider_id="example-context",
+            raise_on_exception=False,
+        )
+
+        assert connection.is_connected
+        assert connection.error is None
+
+    def test_kubernetes_provider_incluster_with_env_var(self, monkeypatch):
+        monkeypatch.setenv("CLUSTER_NAME", "env-cluster-name")
+
+        with (
+            patch(
+                "kubernetes.config.load_kube_config",
+                side_effect=ConfigException("No kubeconfig"),
+            ),
+            patch("kubernetes.config.load_incluster_config", return_value=None),
+            patch("prowler.providers.kubernetes.kubernetes_provider.client.ApiClient"),
+            patch(
+                "prowler.providers.kubernetes.kubernetes_provider.KubernetesProvider.get_all_namespaces",
+                return_value=["default"],
+            ),
+        ):
+            session = KubernetesProvider.setup_session(
+                kubeconfig_file=None,
+                kubeconfig_content=None,
+                context=None,
+                cluster_name=None,
+            )
+            assert isinstance(session, KubernetesSession)
+            assert session.context["context"]["cluster"] == "env-cluster-name"
+
+    def test_kubernetes_provider_incluster_with_cli_flag(self):
+        with (
+            patch(
+                "kubernetes.config.load_kube_config",
+                side_effect=ConfigException("No kubeconfig"),
+            ),
+            patch("kubernetes.config.load_incluster_config", return_value=None),
+            patch("prowler.providers.kubernetes.kubernetes_provider.client.ApiClient"),
+            patch(
+                "prowler.providers.kubernetes.kubernetes_provider.KubernetesProvider.get_all_namespaces",
+                return_value=["default"],
+            ),
+        ):
+            session = KubernetesProvider.setup_session(
+                kubeconfig_file=None,
+                kubeconfig_content=None,
+                context=None,
+                cluster_name="cli-cluster-name",
+            )
+            assert isinstance(session, KubernetesSession)
+            assert session.context["context"]["cluster"] == "cli-cluster-name"
+
+    @patch(
+        "prowler.providers.kubernetes.kubernetes_provider.client.CoreV1Api.list_namespace"
+    )
+    @patch("kubernetes.config.list_kube_config_contexts")
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_kubernetes_provider_proxy_from_env(
+        self,
+        mock_load_kube_config_from_dict,
+        mock_list_kube_config_contexts,
+        mock_list_namespace,
+        monkeypatch,
+    ):
+
+        monkeypatch.setenv("HTTPS_PROXY", "http://my.internal.proxy:8888")
+
+        mock_load_kube_config_from_dict.return_value = None
+        mock_list_kube_config_contexts.return_value = (
+            [
+                {
+                    "name": "example-context",
+                    "context": {
+                        "cluster": "example-cluster",
+                        "user": "example-user",
+                    },
+                }
+            ],
+            None,
+        )
+        mock_list_namespace.return_value.items = [
+            client.V1Namespace(metadata=client.V1ObjectMeta(name="namespace-1")),
+        ]
+
+        kubeconfig_content = '{"apiVersion": "v1", "clusters": [{"cluster": {"server": "https://kubernetes.example.com"}, "name": "example-cluster"}], "contexts": [{"context": {"cluster": "example-cluster", "user": "example-user"}, "name": "example-context"}], "current-context": "example-context", "kind": "Config", "preferences": {}, "users": [{"name": "example-user", "user": {"token": "EXAMPLE_TOKEN"}}]}'
+
+        session = KubernetesProvider.setup_session(
+            kubeconfig_content=kubeconfig_content,
+            context="example-context",
+        )
+
+        assert isinstance(session, KubernetesSession)
+        assert isinstance(session.api_client, client.ApiClient)
+        assert isinstance(session.api_client.configuration, client.Configuration)
+        assert session.api_client.configuration.verify_ssl
+        assert session.api_client.configuration.proxy == "http://my.internal.proxy:8888"
+
+    @patch(
+        "prowler.providers.kubernetes.kubernetes_provider.client.CoreV1Api.list_namespace"
+    )
+    @patch("kubernetes.config.list_kube_config_contexts")
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_kubernetes_provider_disable_tls_verification(
+        self,
+        mock_load_kube_config_from_dict,
+        mock_list_kube_config_contexts,
+        mock_list_namespace,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("K8S_SKIP_TLS_VERIFY", "true")
+
+        mock_load_kube_config_from_dict.return_value = None
+        mock_list_kube_config_contexts.return_value = (
+            [
+                {
+                    "name": "example-context",
+                    "context": {
+                        "cluster": "example-cluster",
+                        "user": "example-user",
+                    },
+                }
+            ],
+            None,
+        )
+        mock_list_namespace.return_value.items = [
+            client.V1Namespace(metadata=client.V1ObjectMeta(name="namespace-1")),
+        ]
+
+        kubeconfig_content = '{"apiVersion": "v1", "clusters": [{"cluster": {"server": "https://kubernetes.example.com"}, "name": "example-cluster"}], "contexts": [{"context": {"cluster": "example-cluster", "user": "example-user"}, "name": "example-context"}], "current-context": "example-context", "kind": "Config", "preferences": {}, "users": [{"name": "example-user", "user": {"token": "EXAMPLE_TOKEN"}}]}'
+
+        session = KubernetesProvider.setup_session(
+            kubeconfig_content=kubeconfig_content,
+            context="example-context",
+        )
+
+        assert isinstance(session, KubernetesSession)
+        assert isinstance(session.api_client, client.ApiClient)
+        assert isinstance(session.api_client.configuration, client.Configuration)
+        assert session.api_client.configuration.verify_ssl is False
+        assert session.api_client.configuration.proxy is None
+
+    @patch(
+        "prowler.providers.kubernetes.kubernetes_provider.client.CoreV1Api.list_namespace"
+    )
+    @patch("kubernetes.config.list_kube_config_contexts")
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_kubernetes_provider_kubeconfig_content(
+        self,
+        mock_load_kube_config_from_dict,
+        mock_list_kube_config_contexts,
+        mock_list_namespace,
+    ):
+        mock_load_kube_config_from_dict.return_value = None
+        mock_list_kube_config_contexts.return_value = (
+            [
+                {
+                    "name": "example-context",
+                    "context": {
+                        "cluster": "example-cluster",
+                        "user": "example-user",
+                    },
+                }
+            ],
+            None,
+        )
+        mock_list_namespace.return_value.items = [
+            client.V1Namespace(metadata=client.V1ObjectMeta(name="namespace-1")),
+        ]
+
+        kubeconfig_content = '{"apiVersion": "v1", "clusters": [{"cluster": {"server": "https://kubernetes.example.com"}, "name": "example-cluster"}], "contexts": [{"context": {"cluster": "example-cluster", "user": "example-user"}, "name": "example-context"}], "current-context": "example-context", "kind": "Config", "preferences": {}, "users": [{"name": "example-user", "user": {"token": "EXAMPLE_TOKEN"}}]}'
+
+        session = KubernetesProvider.setup_session(
+            kubeconfig_content=kubeconfig_content,
+            context="example-context",
+        )
+
+        assert isinstance(session, KubernetesSession)
+        assert isinstance(session.api_client, client.ApiClient)
+
+        assert session.context == {
+            "name": "example-context",
             "context": {
-                "user": "test-user",
-                "cluster": "test-cluster",
+                "cluster": "example-cluster",
+                "user": "example-user",
             },
         }
-        with patch(
-            "prowler.providers.kubernetes.kubernetes_provider.KubernetesProvider.setup_session",
-            return_value=KubernetesSession(
-                api_client=client.ApiClient,
-                context=context,
-            ),
-        ), patch(
-            "prowler.providers.kubernetes.kubernetes_provider.KubernetesProvider.get_all_namespaces",
-            return_value=["namespace-1"],
+
+    @patch(
+        "prowler.providers.kubernetes.kubernetes_provider.client.CoreV1Api.list_namespace"
+    )
+    @patch("kubernetes.config.list_kube_config_contexts")
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_kubernetes_provider_kubeconfig_content_proxy_settings(
+        self,
+        mock_load_kube_config_from_dict,
+        mock_list_kube_config_contexts,
+        mock_list_namespace,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("HTTPS_PROXY", "http://my.internal.proxy:8888")
+        monkeypatch.setenv("K8S_SKIP_TLS_VERIFY", "true")
+
+        mock_load_kube_config_from_dict.return_value = None
+        mock_list_kube_config_contexts.return_value = (
+            [
+                {
+                    "name": "example-context",
+                    "context": {
+                        "cluster": "example-cluster",
+                        "user": "example-user",
+                    },
+                }
+            ],
+            None,
+        )
+        mock_list_namespace.return_value.items = [
+            client.V1Namespace(metadata=client.V1ObjectMeta(name="namespace-1")),
+        ]
+
+        kubeconfig_content = '{"apiVersion": "v1", "clusters": [{"cluster": {"server": "https://kubernetes.example.com"}, "name": "example-cluster"}], "contexts": [{"context": {"cluster": "example-cluster", "user": "example-user"}, "name": "example-context"}], "current-context": "example-context", "kind": "Config", "preferences": {}, "users": [{"name": "example-user", "user": {"token": "EXAMPLE_TOKEN"}}]}'
+
+        session = KubernetesProvider.setup_session(
+            kubeconfig_content=kubeconfig_content,
+            context="example-context",
+        )
+
+        assert isinstance(session, KubernetesSession)
+        assert isinstance(session.api_client, client.ApiClient)
+
+        assert session.context == {
+            "name": "example-context",
+            "context": {
+                "cluster": "example-cluster",
+                "user": "example-user",
+            },
+        }
+
+        assert session.api_client.configuration.proxy == "http://my.internal.proxy:8888"
+        assert session.api_client.configuration.verify_ssl is False
+
+    def test_set_proxy_settings_no_proxy_no_tls_skip(self):
+        """Test set_proxy_settings with no environment variables set."""
+        with patch.dict("os.environ", {}, clear=True):
+            config = KubernetesProvider.set_proxy_settings()
+
+            # Verify it's a Configuration instance from kubernetes.client
+            from kubernetes.client import Configuration
+
+            assert isinstance(config, Configuration)
+
+            assert hasattr(config, "proxy")
+            assert config.proxy is None
+            assert hasattr(config, "verify_ssl")
+            assert config.verify_ssl is True
+
+    def test_set_proxy_settings_with_https_proxy_uppercase(self):
+        """Test set_proxy_settings with HTTPS_PROXY environment variable."""
+        proxy_url = "http://proxy.example.com:8080"
+        with patch.dict("os.environ", {"HTTPS_PROXY": proxy_url}, clear=True):
+            config = KubernetesProvider.set_proxy_settings()
+
+            # Verify it's a Configuration instance from kubernetes.client
+            from kubernetes.client import Configuration
+
+            assert isinstance(config, Configuration)
+
+            assert config.proxy == proxy_url
+            assert config.verify_ssl is True
+
+    def test_set_proxy_settings_with_https_proxy_lowercase(self):
+        """Test set_proxy_settings with https_proxy environment variable."""
+        proxy_url = "http://proxy.example.com:3128"
+        with patch.dict("os.environ", {"https_proxy": proxy_url}, clear=True):
+            config = KubernetesProvider.set_proxy_settings()
+
+            # Verify it's a Configuration instance from kubernetes.client
+            from kubernetes.client import Configuration
+
+            assert isinstance(config, Configuration)
+
+            assert config.proxy == proxy_url
+            assert config.verify_ssl is True
+
+    def test_set_proxy_settings_uppercase_proxy_takes_precedence(self):
+        """Test that HTTPS_PROXY takes precedence over https_proxy."""
+        uppercase_proxy = "http://uppercase.proxy.com:8080"
+        lowercase_proxy = "http://lowercase.proxy.com:3128"
+        with patch.dict(
+            "os.environ",
+            {"HTTPS_PROXY": uppercase_proxy, "https_proxy": lowercase_proxy},
+            clear=True,
         ):
+            config = KubernetesProvider.set_proxy_settings()
 
-            kubernetes_provider = KubernetesProvider(arguments)
-            # This is needed since the output_options requires to get the global provider to get the audit config
-            with patch(
-                "prowler.providers.common.provider.Provider.get_global_provider",
-                return_value=kubernetes_provider,
-            ):
+            # Verify it's a Configuration instance from kubernetes.client
+            from kubernetes.client import Configuration
 
-                kubernetes_provider.output_options = arguments, {}
+            assert isinstance(config, Configuration)
 
-                assert isinstance(
-                    kubernetes_provider.output_options, KubernetesOutputOptions
+            assert config.proxy == uppercase_proxy
+            assert config.verify_ssl is True
+
+    def test_set_proxy_settings_with_tls_skip_true(self):
+        """Test set_proxy_settings with K8S_SKIP_TLS_VERIFY set to true."""
+        with patch.dict("os.environ", {"K8S_SKIP_TLS_VERIFY": "true"}, clear=True):
+            config = KubernetesProvider.set_proxy_settings()
+
+            # Verify it's a Configuration instance from kubernetes.client
+            from kubernetes.client import Configuration
+
+            assert isinstance(config, Configuration)
+
+            assert config.proxy is None
+            assert config.verify_ssl is False
+
+    def test_set_proxy_settings_with_tls_skip_true_uppercase(self):
+        """Test set_proxy_settings with K8S_SKIP_TLS_VERIFY set to TRUE."""
+        with patch.dict("os.environ", {"K8S_SKIP_TLS_VERIFY": "TRUE"}, clear=True):
+            config = KubernetesProvider.set_proxy_settings()
+
+            # Verify it's a Configuration instance from kubernetes.client
+            from kubernetes.client import Configuration
+
+            assert isinstance(config, Configuration)
+
+            assert config.proxy is None
+            assert config.verify_ssl is False
+
+    def test_set_proxy_settings_with_tls_skip_false(self):
+        """Test set_proxy_settings with K8S_SKIP_TLS_VERIFY set to false."""
+        with patch.dict("os.environ", {"K8S_SKIP_TLS_VERIFY": "false"}, clear=True):
+            config = KubernetesProvider.set_proxy_settings()
+
+            # Verify it's a Configuration instance from kubernetes.client
+            from kubernetes.client import Configuration
+
+            assert isinstance(config, Configuration)
+
+            assert config.proxy is None
+            assert config.verify_ssl is True
+
+    def test_set_proxy_settings_with_tls_skip_invalid_value(self):
+        """Test set_proxy_settings with K8S_SKIP_TLS_VERIFY set to invalid value."""
+        with patch.dict("os.environ", {"K8S_SKIP_TLS_VERIFY": "invalid"}, clear=True):
+            config = KubernetesProvider.set_proxy_settings()
+
+            # Verify it's a Configuration instance from kubernetes.client
+            from kubernetes.client import Configuration
+
+            assert isinstance(config, Configuration)
+
+            assert config.proxy is None
+            assert config.verify_ssl is True
+
+    def test_set_proxy_settings_with_both_proxy_and_tls_skip(self):
+        """Test set_proxy_settings with both proxy and TLS skip settings."""
+        proxy_url = "http://secure.proxy.com:8080"
+        with patch.dict(
+            "os.environ",
+            {"HTTPS_PROXY": proxy_url, "K8S_SKIP_TLS_VERIFY": "true"},
+            clear=True,
+        ):
+            config = KubernetesProvider.set_proxy_settings()
+
+            # Verify it's a Configuration instance from kubernetes.client
+            from kubernetes.client import Configuration
+
+            assert isinstance(config, Configuration)
+
+            assert config.proxy == proxy_url
+            assert config.verify_ssl is False
+
+
+class TestKubernetesProviderClusterServerGuard:
+    @patch(
+        "prowler.providers.kubernetes.kubernetes_provider.client.CoreV1Api.list_namespace"
+    )
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_public_cluster_server_is_allowed(
+        self, mock_load_kube_config_from_dict, mock_list_namespace
+    ):
+        mock_list_namespace.return_value.items = []
+
+        connection = KubernetesProvider.test_connection(
+            kubeconfig_file=None,
+            kubeconfig_content=yaml.safe_dump(
+                build_kubeconfig(["https://kubernetes.example.com"])
+            ),
+            provider_id="example-context",
+            raise_on_exception=False,
+        )
+
+        assert connection.is_connected
+        assert connection.error is None
+        mock_load_kube_config_from_dict.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "server",
+        [
+            "https://127.0.0.1:6443",
+            "https://10.0.0.5:6443",
+            "https://[::1]:6443",
+            "https://169.254.169.254/latest/meta-data",
+        ],
+    )
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_non_public_cluster_server_is_rejected_before_loading(
+        self, mock_load_kube_config_from_dict, server
+    ):
+        connection = KubernetesProvider.test_connection(
+            kubeconfig_file=None,
+            kubeconfig_content=yaml.safe_dump(build_kubeconfig([server])),
+            provider_id="example-context",
+            raise_on_exception=False,
+        )
+
+        assert not connection.is_connected
+        assert isinstance(connection.error, KubernetesKubeConfigServerNotAllowedError)
+        assert server not in str(connection.error)
+        assert connection.error.original_exception is None
+        mock_load_kube_config_from_dict.assert_not_called()
+
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_multi_cluster_kubeconfig_with_one_internal_server_is_rejected(
+        self, mock_load_kube_config_from_dict
+    ):
+        connection = KubernetesProvider.test_connection(
+            kubeconfig_file=None,
+            kubeconfig_content=yaml.safe_dump(
+                build_kubeconfig(
+                    ["https://kubernetes.example.com", "https://192.168.1.10:6443"]
                 )
-                assert kubernetes_provider.output_options.status == []
-                assert kubernetes_provider.output_options.output_modes == ["csv"]
-                assert (
-                    kubernetes_provider.output_options.output_directory
-                    == arguments.output_directory
-                )
-                assert kubernetes_provider.output_options.bulk_checks_metadata == {}
-                assert kubernetes_provider.output_options.verbose
-                assert (
-                    kubernetes_provider.output_options.output_filename
-                    == arguments.output_filename
-                )
+            ),
+            provider_id="example-context",
+            raise_on_exception=False,
+        )
 
-                # Delete testing directory
-                rmdir(f"{arguments.output_directory}/compliance")
-                rmdir(arguments.output_directory)
+        assert not connection.is_connected
+        assert isinstance(connection.error, KubernetesKubeConfigServerNotAllowedError)
+        assert "192.168.1.10" not in str(connection.error)
+        mock_load_kube_config_from_dict.assert_not_called()
 
-    # @patch("kubernetes.client.RbacAuthorizationV1Api")
-    # @patch("kubernetes.config.list_kube_config_contexts")
-    # @patch("kubernetes.config.load_incluster_config")
-    # @patch("kubernetes.config.load_kube_config")
-    # def test_get_context_user_roles(
-    #     self,
-    #     mock_list_kube_config_contexts,
-    #     mock_rbac_api,
-    # ):
-    #     mock_list_kube_config_contexts.return_value = (
-    #         [
-    #             {
-    #                 "name": "context_name",
-    #                 "context": {"cluster": "test-cluster", "user": "test-user"},
-    #             }
-    #         ],
-    #         0,
-    #     )
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_non_http_cluster_server_scheme_is_rejected(
+        self, mock_load_kube_config_from_dict
+    ):
+        connection = KubernetesProvider.test_connection(
+            kubeconfig_file=None,
+            kubeconfig_content=yaml.safe_dump(
+                build_kubeconfig(["file:///etc/kubernetes/admin.conf"])
+            ),
+            provider_id="example-context",
+            raise_on_exception=False,
+        )
 
-    #     # Mock the RbacAuthorizationV1Api methods
-    #     cluster_role_binding = MagicMock()
-    #     role_binding = MagicMock()
-    #     cluster_role_binding.list_cluster_role_binding.return_value = MagicMock(
-    #         items=[]
-    #     )
-    #     role_binding.list_role_binding_for_all_namespaces.return_value = MagicMock(
-    #         items=[]
-    #     )
+        assert not connection.is_connected
+        assert isinstance(connection.error, KubernetesKubeConfigServerNotAllowedError)
+        mock_load_kube_config_from_dict.assert_not_called()
 
-    #     mock_rbac_api.return_value = MagicMock(
-    #         list_cluster_role_binding=cluster_role_binding.list_cluster_role_binding,
-    #         list_role_binding_for_all_namespaces=role_binding.list_role_binding_for_all_namespaces,
-    #     )
+    @patch("kubernetes.config.load_kube_config_from_dict")
+    def test_non_public_cluster_server_raises_when_requested(
+        self, mock_load_kube_config_from_dict
+    ):
+        with pytest.raises(KubernetesKubeConfigServerNotAllowedError) as error:
+            KubernetesProvider.test_connection(
+                kubeconfig_file=None,
+                kubeconfig_content=yaml.safe_dump(
+                    build_kubeconfig(["https://127.0.0.1:6443"])
+                ),
+                provider_id="example-context",
+                raise_on_exception=True,
+            )
 
-    #     args = Namespace(kubeconfig_file=None, context=None, only_logs=False)
-    #     provider = KubernetesProvider(args)
-
-    #     roles = provider.get_context_user_roles()
-
-    #     assert isinstance(roles, list)
-
-    # @patch("kubernetes.client.RbacAuthorizationV1Api")
-    # @patch("kubernetes.client.ApiClient")
-    # @patch("kubernetes.config.load_kube_config")
-    # @patch("kubernetes.config.load_incluster_config")
-    # @patch("kubernetes.config.list_kube_config_contexts")
-    # @patch("sys.stdout", new_callable=MagicMock)
-    # def test_print_credentials(
-    #     self,
-    #     mock_list_kube_config_contexts,
-    # ):
-    #     mock_list_kube_config_contexts.return_value = (
-    #         [
-    #             {
-    #                 "name": "context_name",
-    #                 "context": {"cluster": "test-cluster", "user": "test-user"},
-    #             }
-    #         ],
-    #         0,
-    #     )
-
-    #     args = Namespace(kubeconfig_file=None, context=None, only_logs=False)
-    #     provider = KubernetesProvider(args)
-    #     provider.context = {
-    #         "context": {"cluster": "test-cluster", "user": "test-user"},
-    #         "namespace": "default",
-    #     }
-    #     provider.get_context_user_roles = MagicMock(return_value=["ClusterRole: admin"])
-
-    #     # Capture print output
-    #     captured_output = io.StringIO()
-    #     sys.stdout = captured_output
-
-    #     provider.print_credentials()
-
-    #     # Reset standard output
-    #     sys.stdout = sys.__stdout__
-
-    #     output = captured_output.getvalue()
-    #     assert "[test-cluster]" in output
-    #     assert "[test-user]" in output
-    #     assert "[default]" in output
-    #     assert "[ClusterRole: admin]" in output
-
-    # @patch("kubernetes.client.RbacAuthorizationV1Api")
-    # @patch("kubernetes.config.list_kube_config_contexts")
-    # @patch("kubernetes.config.load_incluster_config")
-    # @patch("kubernetes.config.load_kube_config")
-    # def test_search_and_save_roles(
-    #     self,
-    #     mock_list_kube_config_contexts,
-    #     mock_rbac_api,
-    # ):
-    #     mock_list_kube_config_contexts.return_value = (
-    #         [
-    #             {
-    #                 "name": "context_name",
-    #                 "context": {"cluster": "test-cluster", "user": "test-user"},
-    #             }
-    #         ],
-    #         0,
-    #     )
-    #     mock_rbac_api.return_value.list_cluster_role_binding.return_value = MagicMock(
-    #         items=[]
-    #     )
-    #     mock_rbac_api.return_value.list_role_binding_for_all_namespaces.return_value = (
-    #         MagicMock(items=[])
-    #     )
-
-    #     args = Namespace(kubeconfig_file=None, context=None, only_logs=False)
-    #     provider = KubernetesProvider(args)
-    #     provider.context = {"context": {"user": "test-user"}}
-
-    #     roles = provider.search_and_save_roles([], [], "test-user", "ClusterRole")
-    #     assert isinstance(roles, list)
+        assert "127.0.0.1" not in str(error.value)
+        mock_load_kube_config_from_dict.assert_not_called()

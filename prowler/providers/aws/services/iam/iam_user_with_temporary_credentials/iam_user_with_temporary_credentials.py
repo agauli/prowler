@@ -13,10 +13,18 @@ class iam_user_with_temporary_credentials(Check):
             user_name = user_data[0]
             user_arn = user_data[1]
 
-            report = Check_Report_AWS(self.metadata())
+            report = Check_Report_AWS(
+                metadata=self.metadata(),
+                resource={"name": user_name, "arn": user_arn},
+            )
             report.resource_id = user_name
             report.resource_arn = user_arn
             report.region = iam_client.region
+            # Search user in iam_client.users to get tags
+            for iam_user in iam_client.users:
+                if iam_user.arn == user_arn:
+                    report.resource_tags = iam_user.tags
+                    break
 
             report.status = "PASS"
             report.status_extended = f"User {user_name} doesn't have long lived credentials with access to other services than IAM or STS."

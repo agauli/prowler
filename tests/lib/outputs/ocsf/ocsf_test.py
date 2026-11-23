@@ -1,23 +1,32 @@
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from io import StringIO
+from typing import Optional
+from unittest.mock import MagicMock
+from uuid import UUID
 
+import pytest
+import requests
 from freezegun import freeze_time
 from mock import patch
 from py_ocsf_models.events.base_event import SeverityID, StatusID
-from py_ocsf_models.events.findings.detection_finding import DetectionFinding
 from py_ocsf_models.events.findings.detection_finding import (
-    TypeID as DetectionFindingTypeID,
+    DetectionFinding,
+    DetectionFindingTypeID,
 )
 from py_ocsf_models.events.findings.finding import ActivityID, FindingInformation
 from py_ocsf_models.objects.account import Account, TypeID
+from py_ocsf_models.objects.analytic import Analytic
 from py_ocsf_models.objects.cloud import Cloud
 from py_ocsf_models.objects.group import Group
 from py_ocsf_models.objects.metadata import Metadata
+from py_ocsf_models.objects.mitre_attack import MITREAttack
 from py_ocsf_models.objects.organization import Organization
 from py_ocsf_models.objects.product import Product
 from py_ocsf_models.objects.remediation import Remediation
 from py_ocsf_models.objects.resource_details import ResourceDetails
+from pydantic.v1 import BaseModel as V1BaseModel
 
 from prowler.config.config import prowler_version
 from prowler.lib.outputs.ocsf.ocsf import OCSF
@@ -35,7 +44,15 @@ class TestOCSF:
                 muted=False,
                 region=AWS_REGION_EU_WEST_1,
                 resource_tags={"Name": "test", "Environment": "dev"},
-            )
+            ),
+            # Test with int timestamp (UNIX timestamp)
+            generate_finding_output(
+                status="FAIL",
+                severity="medium",
+                muted=False,
+                region=AWS_REGION_EU_WEST_1,
+                timestamp=1619600000,
+            ),
         ]
 
         ocsf = OCSF(findings)
@@ -45,14 +62,22 @@ class TestOCSF:
         assert isinstance(output_data, DetectionFinding)
         assert output_data.activity_id == ActivityID.Create.value
         assert output_data.activity_name == ActivityID.Create.name
-        assert output_data.finding_info.created_time == findings[0].timestamp
-        assert output_data.finding_info.desc == findings[0].description
-        assert output_data.finding_info.title == findings[0].check_title
-        assert output_data.finding_info.uid == findings[0].finding_uid
-        assert output_data.finding_info.product_uid == "prowler"
-        assert output_data.event_time == findings[0].timestamp
+        assert output_data.message == findings[0].status_extended
+        assert output_data.finding_info.created_time == int(
+            findings[0].timestamp.timestamp()
+        )
+        assert output_data.finding_info.created_time_dt == findings[0].timestamp
+        assert output_data.finding_info.desc == findings[0].metadata.Description
+        assert output_data.finding_info.title == findings[0].metadata.CheckTitle
+        assert output_data.finding_info.uid == findings[0].uid
+        assert output_data.finding_info.types == [
+            "Software and Configuration Checks/AWS Security Best Practices/Network Reachability"
+        ]
+        assert output_data.time == int(findings[0].timestamp.timestamp())
+        assert output_data.time_dt == findings[0].timestamp
         assert (
-            output_data.remediation.desc == findings[0].remediation_recommendation_text
+            output_data.remediation.desc
+            == findings[0].metadata.Remediation.Recommendation.Text
         )
         assert output_data.remediation.references == []
         assert output_data.severity_id == SeverityID.Low
@@ -61,31 +86,311 @@ class TestOCSF:
         assert output_data.status == StatusID.New.name
         assert output_data.status_code == findings[0].status
         assert output_data.status_detail == findings[0].status_extended
-        assert output_data.risk_details == findings[0].risk
+        assert output_data.risk_details == findings[0].metadata.Risk
         assert output_data.resources[0].labels == ["Name:test", "Environment:dev"]
         assert output_data.resources[0].name == findings[0].resource_name
         assert output_data.resources[0].uid == findings[0].resource_uid
-        assert output_data.resources[0].type == findings[0].resource_type
+        assert output_data.resources[0].type == findings[0].metadata.ResourceType
         assert output_data.resources[0].cloud_partition == findings[0].partition
         assert output_data.resources[0].region == findings[0].region
         assert output_data.resources[0].data == {
-            "details": findings[0].resource_details
+            "details": findings[0].resource_details,
+            "metadata": {},
         }
-        assert output_data.metadata.event_code == findings[0].check_id
+        assert output_data.metadata.profiles == ["cloud", "datetime"]
+        assert output_data.metadata.tenant_uid == "test-organization-id"
+        assert output_data.metadata.event_code == findings[0].metadata.CheckID
         assert output_data.metadata.product.name == "Prowler"
         assert output_data.metadata.product.vendor_name == "Prowler"
+        assert output_data.metadata.product.uid == "prowler"
         assert output_data.metadata.product.version == prowler_version
         assert output_data.type_uid == DetectionFindingTypeID.Create
-        assert output_data.type_name == DetectionFindingTypeID.Create.name
-        assert output_data.unmapped == {
-            "check_type": findings[0].check_type,
-            "related_url": findings[0].related_url,
-            "categories": findings[0].categories,
-            "depends_on": findings[0].depends_on,
-            "related_to": findings[0].related_to,
-            "notes": findings[0].notes,
+        assert (
+            output_data.type_name
+            == f"Detection Finding: {DetectionFindingTypeID.Create.name}"
+        )
+        # analytic field describes the Prowler check (rule) that generated the finding
+        assert isinstance(output_data.finding_info.analytic, Analytic)
+        assert output_data.finding_info.analytic.name == findings[0].metadata.CheckTitle
+        assert output_data.finding_info.analytic.uid == findings[0].metadata.CheckID
+        assert output_data.finding_info.analytic.type_id == 1
+        assert output_data.finding_info.analytic.type == "Rule"
+        assert (
+            output_data.finding_info.analytic.category
+            == findings[0].metadata.ServiceName
+        )
+        # no MITRE data in default fixture compliance
+        assert output_data.finding_info.attacks is None
+        unmapped = output_data.unmapped
+        scan_id = unmapped.pop("scan_id")
+        assert UUID(scan_id)  # Valid UUID
+        assert unmapped == {
+            "related_url": findings[0].metadata.RelatedUrl,
+            "categories": findings[0].metadata.Categories,
+            "depends_on": findings[0].metadata.DependsOn,
+            "related_to": findings[0].metadata.RelatedTo,
+            "additional_urls": findings[0].metadata.AdditionalURLs,
+            "notes": findings[0].metadata.Notes,
             "compliance": findings[0].compliance,
+            "provider_uid": findings[0].account_uid,
+            "provider": findings[0].provider,
         }
+
+        # Test with int timestamp (UNIX timestamp)
+        output_data = ocsf.data[1]
+
+        assert output_data.time == 1619600000
+        assert output_data.time_dt == datetime.fromtimestamp(
+            1619600000, tz=timezone.utc
+        )
+
+    def test_transform_mitre_attacks_from_multiple_finding_compliance_ids(self):
+        finding = generate_finding_output(
+            provider="aws",
+            compliance={"MITRE-ATTACK": ["T1078", "T1098"]},
+            check_id="iam_user_mfa_enabled_console_access",
+            check_title="IAM users with console access have MFA enabled",
+            service_name="iam",
+        )
+
+        technique_map = {
+            "T1078": {
+                "Name": "Valid Accounts",
+                "TechniqueURL": "https://attack.mitre.org/techniques/T1078/",
+                "Tactics": [
+                    "Defense Evasion",
+                    "Persistence",
+                    "Privilege Escalation",
+                    "Initial Access",
+                ],
+            },
+            "T1098": {
+                "Name": "Account Manipulation",
+                "TechniqueURL": "https://attack.mitre.org/techniques/T1098/",
+                "Tactics": ["Persistence"],
+            },
+        }
+
+        with patch(
+            "prowler.lib.outputs.ocsf.ocsf._load_mitre_technique_map",
+            return_value=technique_map,
+        ):
+            ocsf = OCSF([finding])
+        output_data = ocsf.data[0]
+
+        assert output_data.finding_info.attacks is not None
+        assert len(output_data.finding_info.attacks) == 5
+        attack = output_data.finding_info.attacks[0]
+        assert isinstance(attack, MITREAttack)
+        assert attack.technique.uid == "T1078"
+        assert attack.technique.name == "Valid Accounts"
+        assert attack.technique.src_url == "https://attack.mitre.org/techniques/T1078/"
+        assert attack.tactic is not None
+        assert [attack.tactic.name for attack in output_data.finding_info.attacks] == [
+            "Defense Evasion",
+            "Persistence",
+            "Privilege Escalation",
+            "Initial Access",
+            "Persistence",
+        ]
+        assert [
+            attack.technique.uid for attack in output_data.finding_info.attacks
+        ] == [
+            "T1078",
+            "T1078",
+            "T1078",
+            "T1078",
+            "T1098",
+        ]
+
+    def test_transform_mitre_attacks_ignores_unknown_technique(self):
+        finding = generate_finding_output(
+            provider="aws",
+            compliance={"MITRE-ATTACK": ["T9999", "T1098"]},
+        )
+
+        with patch(
+            "prowler.lib.outputs.ocsf.ocsf._load_mitre_technique_map",
+            return_value={
+                "T1098": {
+                    "Name": "Account Manipulation",
+                    "Tactics": ["Persistence"],
+                }
+            },
+        ):
+            ocsf = OCSF([finding])
+        attacks = ocsf.data[0].finding_info.attacks
+
+        assert attacks is not None
+        assert len(attacks) == 1
+        assert attacks[0].technique.uid == "T1098"
+
+    def test_transform_mitre_attacks_provider_without_catalog(self):
+        finding = generate_finding_output(
+            provider="kubernetes",
+            compliance={"MITRE-ATTACK": ["T1078"]},
+            check_type=[],
+        )
+
+        with patch(
+            "prowler.lib.outputs.ocsf.ocsf._load_mitre_technique_map",
+            return_value={},
+        ):
+            ocsf = OCSF([finding])
+        assert ocsf.data[0].finding_info.attacks is None
+
+    def test_transform_without_mitre_ids_does_not_load_catalog(self):
+        finding = generate_finding_output(provider="kubernetes")
+
+        with patch(
+            "prowler.lib.outputs.ocsf.ocsf._load_mitre_technique_map"
+        ) as mock_load_catalog:
+            ocsf = OCSF([finding])
+
+        assert ocsf.data[0].finding_info.attacks is None
+        mock_load_catalog.assert_not_called()
+
+    def test_load_mitre_technique_map_missing_catalog_is_expected(self):
+        from prowler.lib.outputs.ocsf.ocsf import _load_mitre_technique_map
+
+        _load_mitre_technique_map.cache_clear()
+        try:
+            with (
+                patch("prowler.lib.outputs.ocsf.ocsf.logger.debug") as mock_debug,
+                patch("prowler.lib.outputs.ocsf.ocsf.logger.error") as mock_error,
+            ):
+                assert _load_mitre_technique_map("unsupported") == {}
+
+            mock_debug.assert_called_once_with(
+                "MITRE ATT&CK catalog is not available for provider unsupported"
+            )
+            mock_error.assert_not_called()
+        finally:
+            _load_mitre_technique_map.cache_clear()
+
+    def test_load_mitre_technique_map_existing_catalog(self):
+        from prowler.lib.outputs.ocsf.ocsf import _load_mitre_technique_map
+
+        _load_mitre_technique_map.cache_clear()
+        try:
+            technique_map = _load_mitre_technique_map("aws")
+
+            assert technique_map
+            assert all(
+                technique_id == requirement["Id"]
+                for technique_id, requirement in technique_map.items()
+            )
+        finally:
+            _load_mitre_technique_map.cache_clear()
+
+    def test_load_mitre_technique_map_logs_failure(self):
+        from prowler.lib.outputs.ocsf.ocsf import _load_mitre_technique_map
+
+        mitre_file = MagicMock()
+        mitre_file.is_file.return_value = True
+        mitre_file.open.side_effect = OSError("catalog unavailable")
+        provider_directory = MagicMock()
+        provider_directory.joinpath.return_value = mitre_file
+        compliance_package = MagicMock()
+        compliance_package.joinpath.return_value = provider_directory
+
+        _load_mitre_technique_map.cache_clear()
+        try:
+            with (
+                patch(
+                    "prowler.lib.outputs.ocsf.ocsf.resources.files",
+                    return_value=compliance_package,
+                ),
+                patch("prowler.lib.outputs.ocsf.ocsf.logger.error") as mock_error,
+            ):
+                assert _load_mitre_technique_map("aws") == {}
+
+            message = mock_error.call_args.args[0]
+            assert re.fullmatch(r"OSError\[\d+\]: catalog unavailable", message)
+            compliance_package.joinpath.assert_called_once_with("aws")
+            provider_directory.joinpath.assert_called_once_with("mitre_attack_aws.json")
+        finally:
+            _load_mitre_technique_map.cache_clear()
+
+    def test_transform_mitre_attacks_skips_technique_without_name(self):
+        findings = [
+            generate_finding_output(
+                provider="aws",
+                compliance={"MITRE-ATTACK": ["T1078", "T1098"]},
+            ),
+            generate_finding_output(provider="aws"),
+        ]
+        technique_map = {
+            "T1078": {"Tactics": ["Initial Access"]},
+            "T1098": {
+                "Name": "Account Manipulation",
+                "Tactics": ["Persistence"],
+            },
+        }
+
+        with (
+            patch(
+                "prowler.lib.outputs.ocsf.ocsf._load_mitre_technique_map",
+                return_value=technique_map,
+            ),
+            patch("prowler.lib.outputs.ocsf.ocsf.logger.warning") as mock_warning,
+        ):
+            ocsf = OCSF(findings)
+
+        assert len(ocsf.data) == 2
+        attacks = ocsf.data[0].finding_info.attacks
+        assert attacks is not None
+        assert [attack.technique.uid for attack in attacks] == ["T1098"]
+        mock_warning.assert_called_once_with(
+            "Skipping MITRE ATT&CK technique T1078 for provider aws: missing Name"
+        )
+
+    def test_scan_id_is_unique_per_provider_and_account(self):
+        findings = [
+            generate_finding_output(provider="aws", account_uid="111111111111"),
+            generate_finding_output(provider="aws", account_uid="222222222222"),
+            generate_finding_output(provider="aws", account_uid="111111111111"),
+        ]
+
+        ocsf = OCSF(findings)
+
+        scan_ids = [finding.unmapped["scan_id"] for finding in ocsf.data]
+
+        assert UUID(scan_ids[0])
+        assert UUID(scan_ids[1])
+        assert UUID(scan_ids[2])
+        assert scan_ids[0] == scan_ids[2]
+        assert scan_ids[0] != scan_ids[1]
+
+    def test_validate_ocsf(self):
+        mock_file = StringIO()
+        findings = [
+            generate_finding_output(
+                status="FAIL",
+                severity="low",
+                muted=False,
+                region=AWS_REGION_EU_WEST_1,
+                timestamp=datetime.now(),
+                resource_details="resource_details",
+                resource_name="resource_name",
+                resource_uid="resource-id",
+                status_extended="status extended",
+            )
+        ]
+
+        output = OCSF(findings)
+        output._file_descriptor = mock_file
+
+        with patch.object(mock_file, "close", return_value=None):
+            output.batch_write_data_to_file()
+
+        mock_file.seek(0)
+        content = mock_file.read()
+        json_data = json.loads(content)
+        url = "https://schema.ocsf.io/api/v2/validate"
+        headers = {"content-type": "application/json"}
+        response = requests.post(url, headers=headers, json=json_data[0])
+        assert response.json()["error_count"] == 0
 
     @freeze_time(datetime.now())
     def test_batch_write_data_to_file(self):
@@ -106,14 +411,18 @@ class TestOCSF:
 
         expected_json_output = [
             {
+                "message": "status extended",
                 "metadata": {
-                    "event_code": "test-check-id",
+                    "event_code": "service_test_check_id",
                     "product": {
                         "name": "Prowler",
+                        "uid": "prowler",
                         "vendor_name": "Prowler",
                         "version": prowler_version,
                     },
-                    "version": "1.2.0",
+                    "version": "1.5.0",
+                    "profiles": ["cloud", "datetime"],
+                    "tenant_uid": "test-organization-id",
                 },
                 "severity_id": 2,
                 "severity": "Low",
@@ -122,29 +431,47 @@ class TestOCSF:
                 "status_detail": "status extended",
                 "status_id": 1,
                 "unmapped": {
-                    "check_type": "test-type",
-                    "related_url": "test-url",
-                    "categories": "test-category",
-                    "depends_on": "test-dependency",
-                    "related_to": "test-related-to",
+                    "related_url": "",
+                    "categories": ["encryption"],
+                    "depends_on": ["test-dependency"],
+                    "related_to": ["test-related-to"],
+                    "additional_urls": [
+                        "https://docs.aws.amazon.com/prescriptive-guidance/latest/migration-operations-integration/best-practices.html",
+                        "https://docs.aws.amazon.com/prescriptive-guidance/latest/migration-operations-integration/introduction.html",
+                    ],
                     "notes": "test-notes",
                     "compliance": {"test-compliance": "test-compliance"},
+                    "provider_uid": "123456789012",
+                    "provider": "aws",
                 },
                 "activity_name": "Create",
                 "activity_id": 1,
                 "finding_info": {
-                    "created_time": datetime.now().isoformat(),
+                    "analytic": {
+                        "name": "service_test_check_id",
+                        "uid": "service_test_check_id",
+                        "type_id": 1,
+                        "type": "Rule",
+                        "category": "service",
+                    },
+                    "created_time": int(datetime.now().timestamp()),
+                    "created_time_dt": datetime.now().isoformat(),
                     "desc": "check description",
-                    "product_uid": "prowler",
-                    "title": "test-check-id",
+                    "title": "service_test_check_id",
                     "uid": "test-unique-finding",
+                    "types": [
+                        "Software and Configuration Checks/AWS Security Best Practices/Network Reachability"
+                    ],
                 },
                 "resources": [
                     {
                         "cloud_partition": "aws",
                         "region": "eu-west-1",
-                        "data": {"details": "resource_details"},
-                        "group": {"name": "test-service"},
+                        "data": {
+                            "details": "resource_details",
+                            "metadata": {},
+                        },
+                        "group": {"name": "service"},
                         "labels": [],
                         "name": "resource_name",
                         "type": "test-resource",
@@ -153,12 +480,12 @@ class TestOCSF:
                 ],
                 "category_name": "Findings",
                 "category_uid": 2,
-                "class_name": "DetectionFinding",
+                "class_name": "Detection Finding",
                 "class_uid": 2004,
                 "cloud": {
                     "account": {
                         "name": "123456789012",
-                        "type": "AWS_Account",
+                        "type": "AWS Account",
                         "type_id": 10,
                         "uid": "123456789012",
                         "labels": ["test-tag:test-value"],
@@ -166,15 +493,18 @@ class TestOCSF:
                     "org": {
                         "name": "test-organization",
                         "uid": "test-organization-id",
+                        "ou_uid": "ou-abc1-12345678",
+                        "ou_name": "Production/WebServices",
                     },
                     "provider": "aws",
                     "region": "eu-west-1",
                 },
-                "event_time": datetime.now().isoformat(),
+                "time": int(datetime.now().timestamp()),
+                "time_dt": datetime.now().isoformat(),
                 "remediation": {"desc": "", "references": []},
                 "risk_details": "test-risk",
                 "type_uid": 200401,
-                "type_name": "Create",
+                "type_name": "Detection Finding: Create",
             }
         ]
 
@@ -186,11 +516,44 @@ class TestOCSF:
 
         mock_file.seek(0)
         content = mock_file.read()
-
-        assert json.loads(content) == expected_json_output
+        actual_output = json.loads(content)
+        # scan_id is non-deterministic (UUID7), validate and remove before comparison
+        actual_scan_id = actual_output[0]["unmapped"].pop("scan_id")
+        assert UUID(actual_scan_id)
+        assert actual_output == expected_json_output
 
     def test_batch_write_data_to_file_without_findings(self):
-        assert not hasattr(OCSF([]), "_file_descriptor")
+        assert not OCSF([])._file_descriptor
+
+    def test_batch_write_data_to_file_propagates_oserror(self):
+        """An I/O error (e.g. ENOSPC) while writing a finding must propagate
+        instead of being swallowed, so the caller can fail fast."""
+        findings = [
+            generate_finding_output(
+                status="FAIL",
+                severity="low",
+                muted=False,
+                region=AWS_REGION_EU_WEST_1,
+                timestamp=datetime.now(),
+                resource_details="resource_details",
+                resource_name="resource_name",
+                resource_uid="resource-id",
+                status_extended="status extended",
+            )
+        ]
+
+        output = OCSF(findings)
+        mock_file = MagicMock()
+        mock_file.closed = False
+        # Non-zero so the "[" prelude is skipped and the failure happens on the
+        # per-finding write, the exact path that hit ENOSPC in production.
+        mock_file.tell.return_value = 1
+        mock_file.write.side_effect = OSError(28, "No space left on device")
+        output._file_descriptor = mock_file
+
+        with pytest.raises(OSError) as excinfo:
+            output.batch_write_data_to_file()
+        assert excinfo.value.errno == 28
 
     def test_finding_output_cloud_pass_low_muted(self):
         finding_output = generate_finding_output(
@@ -211,19 +574,24 @@ class TestOCSF:
         finding_information = finding_ocsf.finding_info
 
         assert isinstance(finding_information, FindingInformation)
-        assert finding_information.created_time == finding_output.timestamp
-        assert finding_information.desc == finding_output.description
-        assert finding_information.title == finding_output.check_title
-        assert finding_information.uid == finding_output.finding_uid
-        assert finding_information.product_uid == "prowler"
+        assert finding_information.created_time == int(
+            finding_output.timestamp.timestamp()
+        )
+        assert finding_information.created_time_dt == finding_output.timestamp
+        assert finding_information.desc == finding_output.metadata.Description
+        assert finding_information.title == finding_output.metadata.CheckTitle
+        assert finding_information.uid == finding_output.uid
 
         # Event time
-        assert finding_ocsf.event_time == finding_output.timestamp
+        assert finding_ocsf.time == int(finding_output.timestamp.timestamp())
+        assert finding_ocsf.time_dt == finding_output.timestamp
 
         # Remediation
         remediation = finding_ocsf.remediation
         assert isinstance(remediation, Remediation)
-        assert remediation.desc == finding_output.remediation_recommendation_text
+        assert (
+            remediation.desc == finding_output.metadata.Remediation.Recommendation.Text
+        )
         assert remediation.references == []
 
         # Severity
@@ -237,17 +605,22 @@ class TestOCSF:
         assert finding_ocsf.status_detail == finding_output.status_extended
 
         # Risk
-        assert finding_ocsf.risk_details == finding_output.risk
+        assert finding_ocsf.risk_details == finding_output.metadata.Risk
 
         # Unmapped Data
-        assert finding_ocsf.unmapped == {
-            "check_type": finding_output.check_type,
-            "related_url": finding_output.related_url,
-            "categories": finding_output.categories,
-            "depends_on": finding_output.depends_on,
-            "related_to": finding_output.related_to,
-            "notes": finding_output.notes,
+        unmapped = finding_ocsf.unmapped
+        scan_id = unmapped.pop("scan_id")
+        assert UUID(scan_id)  # Valid UUID
+        assert unmapped == {
+            "related_url": finding_output.metadata.RelatedUrl,
+            "categories": finding_output.metadata.Categories,
+            "depends_on": finding_output.metadata.DependsOn,
+            "related_to": finding_output.metadata.RelatedTo,
+            "additional_urls": finding_output.metadata.AdditionalURLs,
+            "notes": finding_output.metadata.Notes,
             "compliance": finding_output.compliance,
+            "provider_uid": finding_output.account_uid,
+            "provider": finding_output.provider,
         }
 
         # ResourceDetails
@@ -258,20 +631,26 @@ class TestOCSF:
         assert isinstance(resource_details[0], ResourceDetails)
         assert resource_details[0].labels == ["Name:test", "Environment:dev"]
         assert resource_details[0].name == finding_output.resource_name
-        assert resource_details[0].uid == finding_output.resource_uid
-        assert resource_details[0].type == finding_output.resource_type
+        assert resource_details[0].data == {
+            "details": finding_output.resource_details,
+            "metadata": {},  # TODO: add metadata to the resource details
+        }
+        assert resource_details[0].type == finding_output.metadata.ResourceType
         assert resource_details[0].cloud_partition == finding_output.partition
         assert resource_details[0].region == finding_output.region
-        assert resource_details[0].data == {"details": finding_output.resource_details}
+        assert resource_details[0].data == {
+            "details": finding_output.resource_details,
+            "metadata": {},
+        }
 
         resource_details_group = resource_details[0].group
         assert isinstance(resource_details_group, Group)
-        assert resource_details_group.name == finding_output.service_name
+        assert resource_details_group.name == finding_output.metadata.ServiceName
 
         # Metadata
         metadata = finding_ocsf.metadata
         assert isinstance(metadata, Metadata)
-        assert metadata.event_code == finding_output.check_id
+        assert metadata.event_code == finding_output.metadata.CheckID
 
         metadata_product = metadata.product
         assert isinstance(metadata_product, Product)
@@ -281,7 +660,10 @@ class TestOCSF:
 
         # Type
         assert finding_ocsf.type_uid == DetectionFindingTypeID.Create
-        assert finding_ocsf.type_name == DetectionFindingTypeID.Create.name
+        assert (
+            finding_ocsf.type_name
+            == f"Detection Finding: {DetectionFindingTypeID.Create.name}"
+        )
 
         # Cloud
         cloud = finding_ocsf.cloud
@@ -293,7 +675,7 @@ class TestOCSF:
         assert isinstance(cloud_account, Account)
         assert cloud_account.name == finding_output.account_name
         assert cloud_account.type_id == TypeID.AWS_Account
-        assert cloud_account.type == TypeID.AWS_Account.name
+        assert cloud_account.type == TypeID.AWS_Account.name.replace("_", " ")
         assert cloud_account.uid == finding_output.account_uid
         assert cloud_account.labels == ["test-tag:test-value"]
 
@@ -301,6 +683,8 @@ class TestOCSF:
         assert isinstance(cloud_organization, Organization)
         assert cloud_organization.uid == finding_output.account_organization_uid
         assert cloud_organization.name == finding_output.account_organization_name
+        assert cloud_organization.ou_uid == finding_output.account_ou_uid
+        assert cloud_organization.ou_name == finding_output.account_ou_name
 
     def test_finding_output_kubernetes(self):
         finding_output = generate_finding_output(
@@ -309,13 +693,18 @@ class TestOCSF:
             muted=True,
             region=AWS_REGION_EU_WEST_1,
             provider="kubernetes",
+            provider_uid="test-k8s-context",
         )
 
         finding_ocsf = OCSF([finding_output])
         finding_ocsf = finding_ocsf.data[0]
 
-        assert finding_ocsf.container.name == finding_output.resource_name
-        assert finding_ocsf.container.uid == finding_output.resource_uid
+        assert finding_ocsf.metadata.profiles == ["container", "datetime"]
+        assert finding_ocsf.resources[0].namespace == finding_output.region.replace(
+            "namespace: ", ""
+        )
+        assert finding_ocsf.unmapped["provider_uid"] == "test-k8s-context"
+        assert finding_ocsf.unmapped["provider"] == "kubernetes"
 
     def test_finding_output_cloud_fail_low_not_muted(self):
         finding_output = generate_finding_output(
@@ -340,8 +729,8 @@ class TestOCSF:
         finding_ocsf = finding_ocsf.data[0]
 
         # Status
-        assert finding_ocsf.status_id == StatusID.Other.value
-        assert finding_ocsf.status == StatusID.Other.name
+        assert finding_ocsf.status_id == StatusID.New.value
+        assert finding_ocsf.status == StatusID.New.name
         assert finding_ocsf.status_code == finding_output.status
         assert finding_ocsf.status_detail == finding_output.status_extended
 
@@ -365,38 +754,148 @@ class TestOCSF:
         provider = "None"
         assert OCSF.get_account_type_id_by_provider(provider) == TypeID.Other
 
-    # Returns StatusID.New when status is "FAIL" and muted is False
-    def test_new_when_status_fail_and_not_muted(self):
-        status = "FAIL"
+    # Returns StatusID.New when muted is False
+    def test_new_when_not_muted(self):
         muted = False
-        assert OCSF.get_finding_status_id(status, muted) == StatusID.New
+        assert OCSF.get_finding_status_id(muted) == StatusID.New
 
-    # Returns StatusID.Suppressed when status is "FAIL" and muted is True
-    def test_suppressed_when_status_fail_and_muted(self):
-        status = "FAIL"
+    # Returns StatusID.Suppressed when muted is True
+    def test_suppressed_when_muted(self):
         muted = True
-        assert OCSF.get_finding_status_id(status, muted) == StatusID.Suppressed
+        assert OCSF.get_finding_status_id(muted) == StatusID.Suppressed
 
-    # Returns StatusID.Other when status is PASS and muted is False
-    def test_other_when_status_whatever_and_not_muted(self):
-        status = "PASS"
-        muted = False
-        assert OCSF.get_finding_status_id(status, muted) == StatusID.Other
+    def test_sanitize_resource_data_plain_dict(self):
+        result = OCSF._sanitize_resource_data("details", {"key": "value"})
+        assert result == {
+            "details": "details",
+            "metadata": {"key": "value"},
+        }
 
-    # Returns StatusID.Suppresed when status is PASS and muted is True
-    def test_other_when_status_whatever_and_muted(self):
-        status = "PASS"
-        muted = True
-        assert OCSF.get_finding_status_id(status, muted) == StatusID.Suppressed
+    def test_sanitize_resource_data_plain_json_is_not_copied(self):
+        metadata = {"key": ["value", {"nested": 1}]}
+        result = OCSF._sanitize_resource_data("details", metadata)
+        assert result["metadata"] is metadata
 
-    # Returns StatusID.Suppressed when muted is True and status is not "FAIL"
-    def test_suppressed_when_status_pass_and_muted(self):
-        status = "PASS"
-        muted = True
-        assert OCSF.get_finding_status_id(status, muted) == StatusID.Suppressed
+    def test_sanitize_resource_data_empty_dict(self):
+        result = OCSF._sanitize_resource_data("details", {})
+        assert result == {
+            "details": "details",
+            "metadata": {},
+        }
 
-    # Returns StatusID.Other when muted is False and status is not "FAIL"
-    def test_other_when_status_pass_and_not_muted(self):
-        status = "PASS"
-        muted = False
-        assert OCSF.get_finding_status_id(status, muted) == StatusID.Other
+    def test_sanitize_resource_data_with_pydantic_v1_models(self):
+        """Reproduces the Trail serialization bug: resource_metadata is a
+        dict[str, PydanticModel] when checks pass cloudtrail_client.trails."""
+
+        class EventSelector(V1BaseModel):
+            name: str = None
+            is_all: bool = False
+
+        class Trail(V1BaseModel):
+            name: str = None
+            region: str = "us-east-1"
+            is_logging: bool = True
+            latest_cloudwatch_delivery_time: datetime = None
+            data_events: list = []
+            tags: Optional[list] = []
+
+        trails = {
+            "arn:aws:cloudtrail:us-east-1:123456:trail/main": Trail(
+                name="main",
+                latest_cloudwatch_delivery_time=datetime(2026, 1, 15, 10, 30),
+                data_events=[EventSelector(name="s3", is_all=True)],
+            ),
+            "arn:aws:cloudtrail:eu-west-1:123456:trail/secondary": Trail(
+                name="secondary",
+            ),
+        }
+
+        result = OCSF._sanitize_resource_data("resource details", trails)
+
+        assert result["details"] == "resource details"
+        metadata = result["metadata"]
+        # Trail objects are converted to dicts, not strings
+        main_trail = metadata["arn:aws:cloudtrail:us-east-1:123456:trail/main"]
+        assert isinstance(main_trail, dict)
+        assert main_trail["name"] == "main"
+        assert main_trail["region"] == "us-east-1"
+        assert main_trail["is_logging"] is True
+        # datetime converted to string
+        assert "2026-01-15" in main_trail["latest_cloudwatch_delivery_time"]
+        # Nested models are also converted
+        assert main_trail["data_events"] == [{"name": "s3", "is_all": True}]
+
+        secondary_trail = metadata[
+            "arn:aws:cloudtrail:eu-west-1:123456:trail/secondary"
+        ]
+        assert isinstance(secondary_trail, dict)
+        assert secondary_trail["name"] == "secondary"
+        assert secondary_trail["latest_cloudwatch_delivery_time"] is None
+
+        # Entire result must be JSON-serializable
+        json.dumps(result)
+
+    def test_sanitize_resource_data_with_nested_non_serializable_types(self):
+        """Ensures datetimes and enums nested in dicts are handled."""
+        resource_metadata = {
+            "created_at": datetime(2026, 6, 15, 12, 0, 0),
+            "nested": {
+                "timestamp": datetime(2026, 1, 1),
+                "values": [1, "two", datetime(2025, 12, 31)],
+            },
+        }
+
+        result = OCSF._sanitize_resource_data("details", resource_metadata)
+
+        assert "2026-06-15" in result["metadata"]["created_at"]
+        assert "2026-01-01" in result["metadata"]["nested"]["timestamp"]
+        assert result["metadata"]["nested"]["values"][0] == 1
+        assert result["metadata"]["nested"]["values"][1] == "two"
+        assert "2025-12-31" in result["metadata"]["nested"]["values"][2]
+        json.dumps(result)
+
+    @freeze_time(datetime.now())
+    def test_batch_write_data_to_file_with_pydantic_model_in_resource_metadata(self):
+        """End-to-end test: OCSF output succeeds when resource_metadata
+        contains Pydantic v1 model objects (the Trail serialization bug)."""
+
+        class Trail(V1BaseModel):
+            name: str = None
+            region: str = "us-east-1"
+            is_logging: bool = True
+
+        finding = generate_finding_output(
+            status="FAIL",
+            severity="low",
+            muted=False,
+            region=AWS_REGION_EU_WEST_1,
+            timestamp=datetime.now(),
+            resource_details="trail details",
+            resource_name="main-trail",
+            resource_uid="arn:aws:cloudtrail:eu-west-1:123456:trail/main",
+            status_extended="CloudTrail trail is not logging",
+        )
+        # Simulate what happens when Check_Report receives
+        # resource=cloudtrail_client.trails (a dict of Trail models)
+        finding.resource_metadata = {
+            "arn:trail/main": Trail(name="main"),
+            "arn:trail/secondary": Trail(name="secondary", is_logging=False),
+        }
+
+        mock_file = StringIO()
+        output = OCSF([finding])
+        output._file_descriptor = mock_file
+
+        with patch.object(mock_file, "close", return_value=None):
+            output.batch_write_data_to_file()
+
+        mock_file.seek(0)
+        content = mock_file.read()
+        parsed = json.loads(content)
+
+        assert len(parsed) == 1
+        resource_data = parsed[0]["resources"][0]["data"]
+        assert resource_data["details"] == "trail details"
+        # Trail models should be serialized as proper dicts
+        assert resource_data["metadata"]["arn:trail/main"]["name"] == "main"
+        assert resource_data["metadata"]["arn:trail/secondary"]["is_logging"] is False

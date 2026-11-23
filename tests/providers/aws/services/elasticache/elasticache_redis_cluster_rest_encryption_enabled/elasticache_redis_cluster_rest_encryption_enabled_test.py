@@ -7,6 +7,10 @@ from moto import mock_aws
 from prowler.providers.aws.services.elasticache.elasticache_service import (
     ReplicationGroup,
 )
+from tests.providers.aws.services.elasticache.elasticache_service_test import (
+    AUTO_MINOR_VERSION_UPGRADE,
+    AUTOMATIC_FAILOVER,
+)
 from tests.providers.aws.utils import (
     AWS_ACCOUNT_NUMBER,
     AWS_REGION_US_EAST_1,
@@ -36,12 +40,15 @@ class Test_elasticache_replication_group_at_rest_encryption_enabled:
         elasticache_service = MagicMock
         elasticache_service.replication_groups = {}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_aws_provider([AWS_REGION_US_EAST_1]),
-        ), mock.patch(
-            "prowler.providers.aws.services.elasticache.elasticache_service.ElastiCache",
-            new=elasticache_service,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_aws_provider([AWS_REGION_US_EAST_1]),
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.elasticache.elasticache_service.ElastiCache",
+                new=elasticache_service,
+            ),
         ):
             from prowler.providers.aws.services.elasticache.elasticache_redis_cluster_rest_encryption_enabled.elasticache_redis_cluster_rest_encryption_enabled import (
                 elasticache_redis_cluster_rest_encryption_enabled,
@@ -67,15 +74,22 @@ class Test_elasticache_replication_group_at_rest_encryption_enabled:
                 transit_encryption=False,
                 multi_az=REPLICATION_GROUP_MULTI_AZ,
                 tags=REPLICATION_GROUP_TAGS,
+                auto_minor_version_upgrade=AUTO_MINOR_VERSION_UPGRADE,
+                automatic_failover=AUTOMATIC_FAILOVER,
+                engine_version="6.0",
+                auth_token_enabled=False,
             )
         )
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_aws_provider([AWS_REGION_US_EAST_1]),
-        ), mock.patch(
-            "prowler.providers.aws.services.elasticache.elasticache_service.ElastiCache",
-            new=elasticache_service,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_aws_provider([AWS_REGION_US_EAST_1]),
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.elasticache.elasticache_service.ElastiCache",
+                new=elasticache_service,
+            ),
         ):
             from prowler.providers.aws.services.elasticache.elasticache_redis_cluster_rest_encryption_enabled.elasticache_redis_cluster_rest_encryption_enabled import (
                 elasticache_redis_cluster_rest_encryption_enabled,
@@ -111,15 +125,22 @@ class Test_elasticache_replication_group_at_rest_encryption_enabled:
                 transit_encryption=REPLICATION_GROUP_TRANSIT_ENCRYPTION,
                 multi_az=REPLICATION_GROUP_MULTI_AZ,
                 tags=REPLICATION_GROUP_TAGS,
+                auto_minor_version_upgrade=AUTO_MINOR_VERSION_UPGRADE,
+                automatic_failover=AUTOMATIC_FAILOVER,
+                engine_version="6.0",
+                auth_token_enabled=False,
             )
         )
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_aws_provider([AWS_REGION_US_EAST_1]),
-        ), mock.patch(
-            "prowler.providers.aws.services.elasticache.elasticache_service.ElastiCache",
-            new=elasticache_service,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_aws_provider([AWS_REGION_US_EAST_1]),
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.elasticache.elasticache_service.ElastiCache",
+                new=elasticache_service,
+            ),
         ):
             from prowler.providers.aws.services.elasticache.elasticache_redis_cluster_rest_encryption_enabled.elasticache_redis_cluster_rest_encryption_enabled import (
                 elasticache_redis_cluster_rest_encryption_enabled,

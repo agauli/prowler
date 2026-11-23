@@ -7,13 +7,16 @@ from tests.providers.azure.azure_fixtures import DOMAIN, set_mocked_azure_provid
 class Test_entra_policy_guest_invite_only_for_admin_roles:
     def test_entra_no_tenants(self):
         entra_client = mock.MagicMock
-
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles.entra_client",
-            new=entra_client,
+        entra_client.resource_groups = {}
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles.entra_client",
+                new=entra_client,
+            ),
         ):
             from prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles import (
                 entra_policy_guest_invite_only_for_admin_roles,
@@ -27,19 +30,38 @@ class Test_entra_policy_guest_invite_only_for_admin_roles:
 
     def test_entra_empty_tenant(self):
         entra_client = mock.MagicMock
+        entra_client.resource_groups = {}
+        id = str(uuid4())
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles.entra_client",
-            new=entra_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles.entra_client",
+                new=entra_client,
+            ),
         ):
             from prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles import (
                 entra_policy_guest_invite_only_for_admin_roles,
             )
+            from prowler.providers.azure.services.entra.entra_service import (
+                AuthorizationPolicy,
+                DefaultUserRolePermissions,
+            )
 
-            entra_client.authorization_policy = {DOMAIN: {}}
+            # Policy with default settings (everyone can invite guests)
+            entra_client.authorization_policy = {
+                DOMAIN: AuthorizationPolicy(
+                    id=id,
+                    name="Authorization Policy",
+                    description="Default policy",
+                    default_user_role_permissions=DefaultUserRolePermissions(),
+                    guest_invite_settings="everyone",
+                    guest_user_role_id=uuid4(),
+                )
+            }
 
             check = entra_policy_guest_invite_only_for_admin_roles()
             result = check.execute()
@@ -47,7 +69,7 @@ class Test_entra_policy_guest_invite_only_for_admin_roles:
             assert result[0].status == "FAIL"
             assert result[0].subscription == f"Tenant: {DOMAIN}"
             assert result[0].resource_name == "Authorization Policy"
-            assert result[0].resource_id == "authorizationPolicy"
+            assert result[0].resource_id == id
             assert (
                 result[0].status_extended
                 == "Guest invitations are not restricted to users with specific administrative roles only."
@@ -55,20 +77,25 @@ class Test_entra_policy_guest_invite_only_for_admin_roles:
 
     def test_entra_tenant_policy_allow_invites_from_everyone(self):
         entra_client = mock.MagicMock
+        entra_client.resource_groups = {}
         id = str(uuid4())
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles.entra_client",
-            new=entra_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles.entra_client",
+                new=entra_client,
+            ),
         ):
             from prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles import (
                 entra_policy_guest_invite_only_for_admin_roles,
             )
             from prowler.providers.azure.services.entra.entra_service import (
                 AuthorizationPolicy,
+                DefaultUserRolePermissions,
             )
 
             entra_client.authorization_policy = {
@@ -76,9 +103,9 @@ class Test_entra_policy_guest_invite_only_for_admin_roles:
                     id=id,
                     name="TestPolicy",
                     description="TestPolicyDescription",
-                    default_user_role_permissions=None,
+                    default_user_role_permissions=DefaultUserRolePermissions(),
                     guest_invite_settings="everyone",
-                    guest_user_role_id=None,
+                    guest_user_role_id=uuid4(),
                 )
             }
 
@@ -95,20 +122,25 @@ class Test_entra_policy_guest_invite_only_for_admin_roles:
 
     def test_entra_tenant_policy_allow_invites_from_admins(self):
         entra_client = mock.MagicMock
+        entra_client.resource_groups = {}
         id = str(uuid4())
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles.entra_client",
-            new=entra_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles.entra_client",
+                new=entra_client,
+            ),
         ):
             from prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles import (
                 entra_policy_guest_invite_only_for_admin_roles,
             )
             from prowler.providers.azure.services.entra.entra_service import (
                 AuthorizationPolicy,
+                DefaultUserRolePermissions,
             )
 
             entra_client.authorization_policy = {
@@ -116,9 +148,9 @@ class Test_entra_policy_guest_invite_only_for_admin_roles:
                     id=id,
                     name="TestPolicy",
                     description="TestPolicyDescription",
-                    default_user_role_permissions=None,
+                    default_user_role_permissions=DefaultUserRolePermissions(),
                     guest_invite_settings="adminsAndGuestInviters",
-                    guest_user_role_id=None,
+                    guest_user_role_id=uuid4(),
                 )
             }
 
@@ -135,20 +167,25 @@ class Test_entra_policy_guest_invite_only_for_admin_roles:
 
     def test_entra_tenant_policy_allow_invites_from_none(self):
         entra_client = mock.MagicMock
+        entra_client.resource_groups = {}
         id = str(uuid4())
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles.entra_client",
-            new=entra_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles.entra_client",
+                new=entra_client,
+            ),
         ):
             from prowler.providers.azure.services.entra.entra_policy_guest_invite_only_for_admin_roles.entra_policy_guest_invite_only_for_admin_roles import (
                 entra_policy_guest_invite_only_for_admin_roles,
             )
             from prowler.providers.azure.services.entra.entra_service import (
                 AuthorizationPolicy,
+                DefaultUserRolePermissions,
             )
 
             entra_client.authorization_policy = {
@@ -156,9 +193,9 @@ class Test_entra_policy_guest_invite_only_for_admin_roles:
                     id=id,
                     name="TestPolicy",
                     description="TestPolicyDescription",
-                    default_user_role_permissions=None,
+                    default_user_role_permissions=DefaultUserRolePermissions(),
                     guest_invite_settings="none",
-                    guest_user_role_id=None,
+                    guest_user_role_id=uuid4(),
                 )
             }
 

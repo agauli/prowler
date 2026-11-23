@@ -1,22 +1,26 @@
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
+# DescribeAddon has no batch form, so only add-ons a check reads are described.
+COLLECTED_ADDONS = ("vpc-cni",)
 
-################################ EKS
+
 class EKS(AWSService):
     def __init__(self, provider):
+        """Collect the audited account's EKS clusters, their configuration and their add-ons."""
         # Call AWSService's __init__
         super().__init__(__class__.__name__, provider)
         self.clusters = []
-        self.__threading_call__(self.__list_clusters__)
-        self.__describe_cluster__(self.regional_clients)
+        self.__threading_call__(self._list_clusters)
+        self._describe_cluster(self.regional_clients)
+        self.__threading_call__(self._describe_cluster_addons, self.clusters)
 
-    def __list_clusters__(self, regional_client):
+    def _list_clusters(self, regional_client):
         logger.info("EKS listing clusters...")
         try:
             list_clusters_paginator = regional_client.get_paginator("list_clusters")
@@ -39,7 +43,7 @@ class EKS(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_cluster__(self, regional_clients):
+    def _describe_cluster(self, regional_clients):
         logger.info("EKS listing clusters...")
         try:
             for cluster in self.clusters:
@@ -84,6 +88,10 @@ class EKS(AWSService):
                     ]["publicAccessCidrs"]
                 if "encryptionConfig" in describe_cluster["cluster"]:
                     cluster.encryptionConfig = True
+                if "deletionProtection" in describe_cluster["cluster"]:
+                    cluster.deletion_protection = describe_cluster["cluster"][
+                        "deletionProtection"
+                    ]
                 cluster.tags = [describe_cluster["cluster"].get("tags")]
                 cluster.version = describe_cluster["cluster"].get("version", "")
 
@@ -92,10 +100,67 @@ class EKS(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
+    def _describe_cluster_addons(self, cluster):
+        """Attach the add-ons named in COLLECTED_ADDONS, with their configuration, to a cluster.
+
+        ListAddons names every add-on installed on the cluster and DescribeAddon then supplies
+        the ARN and the raw `configurationValues` blob for the ones checks read. A failed listing
+        sets `addons_discovery_failed` on the cluster and a failed describe sets
+        `configuration_discovery_failed` on the add-on, so a check can tell an add-on that is
+        absent from one whose state could not be read instead of reporting both as absent.
+        """
+        logger.info("EKS describing cluster add-ons...")
+        try:
+            regional_client = self.regional_clients[cluster.region]
+            list_addons_paginator = regional_client.get_paginator("list_addons")
+            for page in list_addons_paginator.paginate(clusterName=cluster.name):
+                for addon_name in page["addons"]:
+                    if addon_name in COLLECTED_ADDONS:
+                        cluster.addons[addon_name] = EKSAddon(name=addon_name)
+        except Exception as error:
+            cluster.addons_discovery_failed = True
+            logger.error(
+                f"{cluster.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+            return
+
+        for addon in cluster.addons.values():
+            try:
+                describe_addon = regional_client.describe_addon(
+                    clusterName=cluster.name, addonName=addon.name
+                )
+                addon.arn = describe_addon["addon"].get("addonArn")
+                addon.configuration_values = describe_addon["addon"].get(
+                    "configurationValues"
+                )
+            except Exception as error:
+                addon.configuration_discovery_failed = True
+                logger.error(
+                    f"{cluster.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+
 
 class EKSClusterLoggingEntity(BaseModel):
     types: list[str] = None
     enabled: bool = None
+
+
+class EKSAddon(BaseModel):
+    """An EKS managed add-on, with the configuration values collected for it.
+
+    Attributes:
+        name: The add-on name as returned by ListAddons.
+        arn: The add-on ARN, absent when DescribeAddon could not be read.
+        configuration_values: The raw JSON blob supplied for the add-on, absent when none
+            was supplied or when DescribeAddon could not be read.
+        configuration_discovery_failed: True when DescribeAddon failed, so a check can
+            tell a setting that is unset from one that could not be read.
+    """
+
+    name: str
+    arn: Optional[str] = None
+    configuration_values: Optional[str] = None
+    configuration_discovery_failed: bool = False
 
 
 class EKSCluster(BaseModel):
@@ -107,6 +172,9 @@ class EKSCluster(BaseModel):
     security_group_id: str = None
     endpoint_public_access: bool = None
     endpoint_private_access: bool = None
-    public_access_cidrs: list[str] = None
+    public_access_cidrs: list[str] = []
     encryptionConfig: bool = None
+    deletion_protection: bool = None
+    addons: dict[str, EKSAddon] = {}
+    addons_discovery_failed: bool = False
     tags: Optional[list] = []

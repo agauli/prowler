@@ -1,9 +1,10 @@
 import csv
 from datetime import datetime
+from time import sleep
 from typing import Optional
 
 from botocore.client import ClientError
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.config.config import encoding_format_utf_8
 from prowler.lib.logger import logger
@@ -13,41 +14,30 @@ from prowler.providers.aws.lib.service.service import AWSService
 
 def is_service_role(role):
     try:
-        if "Statement" in role["AssumeRolePolicyDocument"]:
-            if isinstance(role["AssumeRolePolicyDocument"]["Statement"], list):
-                for statement in role["AssumeRolePolicyDocument"]["Statement"]:
-                    if (
-                        statement["Effect"] == "Allow"
-                        and (
-                            "sts:AssumeRole" in statement["Action"]
-                            or "sts:*" in statement["Action"]
-                            or "*" in statement["Action"]
-                        )
-                        # This is what defines a service role
-                        and "Service" in statement["Principal"]
-                    ):
-                        return True
-            else:
-                statement = role["AssumeRolePolicyDocument"]["Statement"]
-                if (
-                    statement["Effect"] == "Allow"
-                    and (
-                        "sts:AssumeRole" in statement["Action"]
-                        or "sts:*" in statement["Action"]
-                        or "*" in statement["Action"]
-                    )
-                    # This is what defines a service role
-                    and "Service" in statement["Principal"]
-                ):
-                    return True
+        statements = role.get("AssumeRolePolicyDocument", {}).get("Statement", [])
+        if not isinstance(statements, list):
+            statements = [statements]
+
+        for statement in statements:
+            if statement.get("Effect") != "Allow" or not any(
+                action in statement.get("Action", [])
+                for action in ("sts:AssumeRole", "sts:*", "*")
+            ):
+                return False
+
+            principal = statement.get("Principal", {})
+            if set(principal.keys()) != {"Service"}:
+                return False
+
+        return True
+
     except Exception as error:
         logger.error(
             f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
         )
-    return False
+        return False
 
 
-################## IAM
 class IAM(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
@@ -55,55 +45,85 @@ class IAM(AWSService):
         self.role_arn_template = f"arn:{self.audited_partition}:iam:{self.region}:{self.audited_account}:role"
         self.password_policy_arn_template = f"arn:{self.audited_partition}:iam:{self.region}:{self.audited_account}:password-policy"
         self.mfa_arn_template = (
-            f"arn:{self.audited_partition}:iam:{self.region}:{self.audited_account}:mfa"
+            f"arn:{self.audited_partition}:iam::{self.audited_account}:mfa"
         )
-        self.users = self.__get_users__()
-        self.roles = self.__get_roles__()
-        self.account_summary = self.__get_account_summary__()
-        self.virtual_mfa_devices = self.__list_virtual_mfa_devices__()
-        self.credential_report = self.__get_credential_report__()
-        self.groups = self.__get_groups__()
-        self.__get_group_users__()
-        self.__list_attached_group_policies__()
-        self.__list_attached_user_policies__()
-        self.__list_attached_role_policies__()
-        self.__list_mfa_devices__()
-        self.password_policy = self.__get_password_policy__()
+        self.users = self._get_users()
+        self.roles = self._get_roles()
+        self.account_summary = self._get_account_summary()
+        self.virtual_mfa_devices = self._list_virtual_mfa_devices()
+        self.credential_report = self._get_credential_report()
+        self.groups = self._get_groups()
+        self._get_group_users()
+        self._list_attached_group_policies()
+        self._list_attached_user_policies()
+        self._list_attached_role_policies()
+        self._list_mfa_devices()
+        self.password_policy = self._get_password_policy()
         support_policy_arn = (
-            "arn:aws:iam::aws:policy/aws-service-role/AWSSupportServiceRolePolicy"
+            f"arn:{self.audited_partition}:iam::aws:policy/AWSSupportAccess"
         )
         self.entities_role_attached_to_support_policy = (
-            self.__list_entities_role_for_policy__(support_policy_arn)
+            self._list_entities_role_for_policy(support_policy_arn)
         )
-        securityaudit_policy_arn = "arn:aws:iam::aws:policy/SecurityAudit"
+        securityaudit_policy_arn = (
+            f"arn:{self.audited_partition}:iam::aws:policy/SecurityAudit"
+        )
         self.entities_role_attached_to_securityaudit_policy = (
-            self.__list_entities_role_for_policy__(securityaudit_policy_arn)
+            self._list_entities_role_for_policy(securityaudit_policy_arn)
+        )
+        cloudshell_admin_policy_arn = (
+            f"arn:{self.audited_partition}:iam::aws:policy/AWSCloudShellFullAccess"
+        )
+        self.entities_attached_to_cloudshell_policy = self._list_entities_for_policy(
+            cloudshell_admin_policy_arn
         )
         # List both Customer (attached and unattached) and AWS Managed (only attached) policies
-        self.policies = []
-        self.policies.extend(self.__list_policies__("AWS"))
-        self.policies.extend(self.__list_policies__("Local"))
-        self.__list_policies_version__(self.policies)
-        self.__list_inline_user_policies__()
-        self.__list_inline_group_policies__()
-        self.__list_inline_role_policies__()
-        self.saml_providers = self.__list_saml_providers__()
-        self.server_certificates = self.__list_server_certificates__()
-        self.__list_tags_for_resource__()
+        self.policies = {}
+        self.policies.update(self._list_policies("AWS"))
+        self.policies.update(self._list_policies("Local"))
+        self._list_policies_version(self.policies)
+        self._list_inline_user_policies()
+        self._list_inline_group_policies()
+        self._list_inline_role_policies()
+        self.service_specific_credentials = []
+        self._list_service_specific_credentials()
+        self.saml_providers = self._list_saml_providers()
+        self.server_certificates = self._list_server_certificates()
         self.access_keys_metadata = {}
-        self.__get_access_keys_metadata__()
+        self._get_access_keys_metadata()
         self.last_accessed_services = {}
-        self.__get_last_accessed_services__()
+        self._get_last_accessed_services()
+        self.role_last_accessed_services = {}
+        if (
+            "iam_role_access_not_stale_to_bedrock"
+            in provider.audit_metadata.expected_checks
+        ):
+            self._get_role_last_accessed_services()
         self.user_temporary_credentials_usage = {}
-        self.__get_user_temporary_credentials_usage__()
+        self._get_user_temporary_credentials_usage()
+        self.organization_features = []
+        self._list_organizations_features()
+        # ListRoles does not echo PermissionsBoundary; backfill via GetRole.
+        if self.roles:
+            self.__threading_call__(self._get_role_permissions_boundary, self.roles)
+        # List missing tags
+        self.__threading_call__(self._list_tags, self.users)
+        self.__threading_call__(self._list_tags, self.roles)
+        self.__threading_call__(
+            self._list_tags,
+            [policy for policy in self.policies.values() if policy.type == "Custom"],
+        )
+        self.__threading_call__(self._list_tags, self.server_certificates)
+        if self.saml_providers is not None:
+            self.__threading_call__(self._list_tags, self.saml_providers.values())
 
-    def __get_client__(self):
+    def _get_client(self):
         return self.client
 
-    def __get_roles__(self):
+    def _get_roles(self):
         logger.info("IAM - List Roles...")
+        roles = []
         try:
-            roles = []
             get_roles_paginator = self.client.get_paginator("list_roles")
             for page in get_roles_paginator.paginate():
                 for role in page["Roles"]:
@@ -116,6 +136,7 @@ class IAM(AWSService):
                                 arn=role["Arn"],
                                 assume_role_policy=role["AssumeRolePolicyDocument"],
                                 is_service_role=is_service_role(role),
+                                permissions_boundary=role.get("PermissionsBoundary"),
                             )
                         )
         except ClientError as error:
@@ -132,10 +153,9 @@ class IAM(AWSService):
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
-        finally:
-            return roles
+        return roles
 
-    def __get_credential_report__(self):
+    def _get_credential_report(self):
         logger.info("IAM - Get Credential Report...")
         report_is_completed = False
         credential_list = []
@@ -165,13 +185,12 @@ class IAM(AWSService):
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
-        finally:
-            return credential_list
+        return credential_list
 
-    def __get_groups__(self):
+    def _get_groups(self):
         logger.info("IAM - Get Groups...")
+        groups = []
         try:
-            groups = []
             get_groups_paginator = self.client.get_paginator("list_groups")
             for page in get_groups_paginator.paginate():
                 for group in page["Groups"]:
@@ -184,25 +203,23 @@ class IAM(AWSService):
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
-        finally:
-            return groups
+        return groups
 
-    def __get_account_summary__(self):
+    def _get_account_summary(self):
         logger.info("IAM - Get Account Summary...")
+        account_summary = None
         try:
             account_summary = self.client.get_account_summary()
         except Exception as error:
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
-            account_summary = None
-        finally:
-            return account_summary
+        return account_summary
 
-    def __get_password_policy__(self):
+    def _get_password_policy(self):
         logger.info("IAM - Get Password Policy...")
+        stored_password_policy = None
         try:
-            stored_password_policy = None
             password_policy = self.client.get_account_password_policy()[
                 "PasswordPolicy"
             ]
@@ -264,14 +281,13 @@ class IAM(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-        finally:
-            return stored_password_policy
+        return stored_password_policy
 
-    def __get_users__(self):
-        logger.info("IAM - List Users...")
+    def _get_users(self):
+        logger.info("IAM - Get Users...")
+        users = []
         try:
             get_users_paginator = self.client.get_paginator("list_users")
-            users = []
             for page in get_users_paginator.paginate():
                 for user in page["Users"]:
                     if not self.audit_resources or (
@@ -301,13 +317,12 @@ class IAM(AWSService):
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
-        finally:
-            return users
+        return users
 
-    def __list_virtual_mfa_devices__(self):
+    def _list_virtual_mfa_devices(self):
         logger.info("IAM - List Virtual MFA Devices...")
+        mfa_devices = []
         try:
-            mfa_devices = []
             list_virtual_mfa_devices_paginator = self.client.get_paginator(
                 "list_virtual_mfa_devices"
             )
@@ -319,10 +334,9 @@ class IAM(AWSService):
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
-        finally:
-            return mfa_devices
+        return mfa_devices
 
-    def __list_attached_group_policies__(self):
+    def _list_attached_group_policies(self):
         logger.info("IAM - List Attached Group Policies...")
         try:
             for group in self.groups:
@@ -347,7 +361,7 @@ class IAM(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_group_users__(self):
+    def _get_group_users(self):
         logger.info("IAM - Get Group Users...")
         try:
             for group in self.groups:
@@ -373,31 +387,48 @@ class IAM(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_mfa_devices__(self):
+    def _list_mfa_devices(self):
         logger.info("IAM - List MFA Devices...")
         try:
             for user in self.users:
-                list_mfa_devices_paginator = self.client.get_paginator(
-                    "list_mfa_devices"
-                )
-                mfa_devices = []
-                for page in list_mfa_devices_paginator.paginate(UserName=user.name):
-                    for mfa_device in page["MFADevices"]:
-                        mfa_serial_number = mfa_device["SerialNumber"]
-                        try:
-                            mfa_type = mfa_serial_number.split(":")[5].split("/")[0]
-                        except IndexError:
-                            mfa_type = "hardware"
-                        mfa_devices.append(
-                            MFADevice(serial_number=mfa_serial_number, type=mfa_type)
+                try:
+                    list_mfa_devices_paginator = self.client.get_paginator(
+                        "list_mfa_devices"
+                    )
+                    mfa_devices = []
+                    for page in list_mfa_devices_paginator.paginate(UserName=user.name):
+                        for mfa_device in page["MFADevices"]:
+                            mfa_serial_number = mfa_device["SerialNumber"]
+                            try:
+                                mfa_type = mfa_serial_number.split(":")[5].split("/")[0]
+                            except IndexError:
+                                mfa_type = "hardware"
+                            mfa_devices.append(
+                                MFADevice(
+                                    serial_number=mfa_serial_number, type=mfa_type
+                                )
+                            )
+                    user.mfa_devices = mfa_devices
+                except ClientError as error:
+                    if error.response["Error"]["Code"] == "NoSuchEntity":
+                        logger.warning(
+                            f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                         )
-                user.mfa_devices = mfa_devices
+                    else:
+                        logger.error(
+                            f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                        )
+
+                except Exception as error:
+                    logger.error(
+                        f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                    )
         except Exception as error:
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_attached_user_policies__(self):
+    def _list_attached_user_policies(self):
         logger.info("IAM - List Attached User Policies...")
         try:
             for user in self.users:
@@ -433,8 +464,36 @@ class IAM(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_attached_role_policies__(self):
-        logger.info("IAM - List Attached User Policies...")
+    def _get_role_permissions_boundary(self, role):
+        """Backfill ``role.permissions_boundary`` via ``GetRole``.
+
+        ``ListRoles`` does not return ``PermissionsBoundary`` in practice, so
+        the value is fetched per role and stored on the ``Role`` model.
+
+        Args:
+            role: The ``Role`` instance to enrich.
+        """
+        try:
+            response = self.client.get_role(RoleName=role.name)
+            role.permissions_boundary = response.get("Role", {}).get(
+                "PermissionsBoundary"
+            )
+        except ClientError as error:
+            if error.response["Error"]["Code"] == "NoSuchEntity":
+                logger.warning(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            else:
+                logger.error(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+        except Exception as error:
+            logger.error(
+                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
+    def _list_attached_role_policies(self):
+        logger.info("IAM - List Attached Role Policies...")
         try:
             if self.roles:
                 for role in self.roles:
@@ -470,7 +529,7 @@ class IAM(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_inline_user_policies__(self):
+    def _list_inline_user_policies(self):
         logger.info("IAM - List Inline User Policies...")
         for user in self.users:
             try:
@@ -489,16 +548,15 @@ class IAM(AWSService):
                                 UserName=user.name, PolicyName=policy
                             )
                             inline_user_policy_doc = inline_policy["PolicyDocument"]
-                            self.policies.append(
-                                Policy(
-                                    name=policy,
-                                    arn=user.arn,
-                                    entity=user.name,
-                                    type="Inline",
-                                    attached=True,
-                                    version_id="v1",
-                                    document=inline_user_policy_doc,
-                                )
+                            inline_user_policy_arn = f"{user.arn}:policy/{policy}"
+                            self.policies[inline_user_policy_arn] = Policy(
+                                name=policy,
+                                arn=user.arn,
+                                entity=user.name,
+                                type="Inline",
+                                attached=True,
+                                version_id="v1",
+                                document=inline_user_policy_doc,
                             )
                         except ClientError as error:
                             if error.response["Error"]["Code"] == "NoSuchEntity":
@@ -528,7 +586,7 @@ class IAM(AWSService):
                     f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                 )
 
-    def __list_inline_group_policies__(self):
+    def _list_inline_group_policies(self):
         logger.info("IAM - List Inline Group Policies...")
         for group in self.groups:
             try:
@@ -547,16 +605,15 @@ class IAM(AWSService):
                                 GroupName=group.name, PolicyName=policy
                             )
                             inline_group_policy_doc = inline_policy["PolicyDocument"]
-                            self.policies.append(
-                                Policy(
-                                    name=policy,
-                                    arn=group.arn,
-                                    entity=group.name,
-                                    type="Inline",
-                                    attached=True,
-                                    version_id="v1",
-                                    document=inline_group_policy_doc,
-                                )
+                            inline_group_policy_arn = f"{group.arn}:policy/{policy}"
+                            self.policies[inline_group_policy_arn] = Policy(
+                                name=policy,
+                                arn=group.arn,
+                                entity=group.name,
+                                type="Inline",
+                                attached=True,
+                                version_id="v1",
+                                document=inline_group_policy_doc,
                             )
                         except ClientError as error:
                             if error.response["Error"]["Code"] == "NoSuchEntity":
@@ -588,7 +645,7 @@ class IAM(AWSService):
                     f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                 )
 
-    def __list_inline_role_policies__(self):
+    def _list_inline_role_policies(self):
         logger.info("IAM - List Inline Role Policies...")
         if self.roles:
             for role in self.roles:
@@ -608,16 +665,15 @@ class IAM(AWSService):
                                     RoleName=role.name, PolicyName=policy
                                 )
                                 inline_role_policy_doc = inline_policy["PolicyDocument"]
-                                self.policies.append(
-                                    Policy(
-                                        name=policy,
-                                        arn=role.arn,
-                                        entity=role.name,
-                                        type="Inline",
-                                        attached=True,
-                                        version_id="v1",
-                                        document=inline_role_policy_doc,
-                                    )
+                                inline_role_policy_arn = f"{role.arn}:policy/{policy}"
+                                self.policies[inline_role_policy_arn] = Policy(
+                                    name=policy,
+                                    arn=role.arn,
+                                    entity=role.name,
+                                    type="Inline",
+                                    attached=True,
+                                    version_id="v1",
+                                    document=inline_role_policy_doc,
                                 )
                             except ClientError as error:
                                 if error.response["Error"]["Code"] == "NoSuchEntity":
@@ -651,14 +707,13 @@ class IAM(AWSService):
                         f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                     )
 
-    def __list_entities_role_for_policy__(self, policy_arn):
+    def _list_entities_role_for_policy(self, policy_arn):
         logger.info("IAM - List Entities Role For Policy...")
+        roles = []
         try:
-            roles = []
             roles = self.client.list_entities_for_policy(
                 PolicyArn=policy_arn, EntityFilter="Role"
             )["PolicyRoles"]
-            return roles
         except ClientError as error:
             if error.response["Error"]["Code"] == "AccessDenied":
                 logger.error(
@@ -673,13 +728,47 @@ class IAM(AWSService):
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
-        finally:
-            return roles
+        return roles
 
-    def __list_policies__(self, scope):
-        logger.info("IAM - List Policies...")
+    def _list_entities_for_policy(self, policy_arn):
+        logger.info("IAM - List Entities For Policy...")
+        entities = {
+            "Users": [],
+            "Groups": [],
+            "Roles": [],
+        }
         try:
-            policies = []
+            paginator = self.client.get_paginator("list_entities_for_policy")
+            for response in paginator.paginate(PolicyArn=policy_arn):
+                entities["Users"].extend(
+                    user["UserName"] for user in response.get("PolicyUsers", [])
+                )
+                entities["Groups"].extend(
+                    group["GroupName"] for group in response.get("PolicyGroups", [])
+                )
+                entities["Roles"].extend(
+                    role["RoleName"] for role in response.get("PolicyRoles", [])
+                )
+        except ClientError as error:
+            if error.response["Error"]["Code"] == "AccessDenied":
+                logger.error(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+                entities = None
+            else:
+                logger.error(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+        except Exception as error:
+            logger.error(
+                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+        return entities
+
+    def _list_policies(self, scope):
+        logger.info("IAM - List Policies...")
+        policies = {}
+        try:
             list_policies_paginator = self.client.get_paginator("list_policies")
             for page in list_policies_paginator.paginate(
                 Scope=scope, OnlyAttached=False if scope == "Local" else True
@@ -688,29 +777,24 @@ class IAM(AWSService):
                     if not self.audit_resources or (
                         is_resource_filtered(policy["Arn"], self.audit_resources)
                     ):
-                        policies.append(
-                            Policy(
-                                name=policy["PolicyName"],
-                                arn=policy["Arn"],
-                                entity=policy["PolicyId"],
-                                version_id=policy["DefaultVersionId"],
-                                type="Custom" if scope == "Local" else "AWS",
-                                attached=(
-                                    True if policy["AttachmentCount"] > 0 else False
-                                ),
-                            )
+                        policies[policy["Arn"]] = Policy(
+                            name=policy["PolicyName"],
+                            arn=policy["Arn"],
+                            entity=policy["PolicyId"],
+                            version_id=policy["DefaultVersionId"],
+                            type="Custom" if scope == "Local" else "AWS",
+                            attached=(True if policy["AttachmentCount"] > 0 else False),
                         )
         except Exception as error:
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
-        finally:
-            return policies
+        return policies
 
-    def __list_policies_version__(self, policies):
+    def _list_policies_version(self, policies):
         logger.info("IAM - List Policies Version...")
         try:
-            for policy in policies:
+            for policy in policies.values():
                 try:
                     policy_version = self.client.get_policy_version(
                         PolicyArn=policy.arn, VersionId=policy.version_id
@@ -731,114 +815,94 @@ class IAM(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_saml_providers__(self):
+    def _list_saml_providers(self):
         logger.info("IAM - List SAML Providers...")
+        saml_providers = {}
         try:
-            saml_providers = self.client.list_saml_providers()["SAMLProviderList"]
-        except Exception as error:
-            logger.error(
-                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-            )
-            saml_providers = None
-        finally:
-            return saml_providers
+            saml_providers_list = self.client.list_saml_providers()["SAMLProviderList"]
 
-    def __list_server_certificates__(self):
-        logger.info("IAM - List Server Certificates...")
-        try:
-            server_certificates = []
-            for certificate in self.client.list_server_certificates()[
-                "ServerCertificateMetadataList"
-            ]:
+            for provider in saml_providers_list:
                 if not self.audit_resources or (
-                    is_resource_filtered(certificate["Arn"], self.audit_resources)
+                    is_resource_filtered(provider["Arn"], self.audit_resources)
                 ):
-                    server_certificates.append(
-                        Certificate(
-                            name=certificate["ServerCertificateName"],
-                            id=certificate["ServerCertificateId"],
-                            arn=certificate["Arn"],
-                            expiration=certificate["Expiration"],
-                        )
+                    saml_providers[provider["Arn"]] = SAMLProvider(
+                        name=provider["Arn"].split("/")[-1], arn=provider["Arn"]
                     )
+        except ClientError as error:
+            logger.error(
+                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+            if error.response["Error"]["Code"] == "AccessDenied":
+                saml_providers = None
         except Exception as error:
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
-        finally:
-            return server_certificates
 
-    def __list_tags_for_resource__(self):
+        return saml_providers
+
+    def _list_server_certificates(self) -> list:
+        logger.info("IAM - List Server Certificates...")
+        server_certificates = []
+        try:
+            paginator = self.client.get_paginator("list_server_certificates")
+            for page in paginator.paginate():
+                for certificate in page["ServerCertificateMetadataList"]:
+                    if not self.audit_resources or (
+                        is_resource_filtered(certificate["Arn"], self.audit_resources)
+                    ):
+                        server_certificates.append(
+                            Certificate(
+                                name=certificate["ServerCertificateName"],
+                                id=certificate["ServerCertificateId"],
+                                arn=certificate["Arn"],
+                                expiration=certificate["Expiration"],
+                            )
+                        )
+        except Exception as error:
+            logger.error(
+                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+        return server_certificates
+
+    def _list_tags(self, resource: any):
         logger.info("IAM - List Tags...")
         try:
-            if self.roles:
-                for role in self.roles:
-                    try:
-                        response = self.client.list_role_tags(RoleName=role.name)[
-                            "Tags"
-                        ]
-                        role.tags = response
-                    except ClientError as error:
-                        if error.response["Error"]["Code"] == "NoSuchEntity":
-                            role.tags = []
-                        else:
-                            logger.error(
-                                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-                            )
-                    except Exception as error:
-                        logger.error(
-                            f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-                        )
-
+            if isinstance(resource, Role):
+                resource.tags = self.client.list_role_tags(RoleName=resource.name).get(
+                    "Tags", []
+                )
+            elif isinstance(resource, User):
+                resource.tags = self.client.list_user_tags(UserName=resource.name).get(
+                    "Tags", []
+                )
+            elif isinstance(resource, Policy):
+                if resource.type == "Custom":
+                    resource.tags = self.client.list_policy_tags(
+                        PolicyArn=resource.arn
+                    ).get("Tags", [])
+            elif isinstance(resource, Certificate):
+                resource.tags = self.client.list_server_certificate_tags(
+                    ServerCertificateName=resource.name
+                ).get("Tags", [])
+            elif isinstance(resource, SAMLProvider):
+                resource.tags = self.client.list_saml_provider_tags(
+                    SAMLProviderArn=resource.arn
+                ).get("Tags", [])
         except Exception as error:
-            logger.error(
-                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-            )
+            if error.response["Error"]["Code"] in [
+                "NoSuchEntity",
+                "NoSuchEntityException",
+            ]:
+                logger.warning(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            else:
+                logger.error(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
 
-        try:
-            for user in self.users:
-                try:
-                    response = self.client.list_user_tags(UserName=user.name)["Tags"]
-                    user.tags = response
-                except ClientError as error:
-                    if error.response["Error"]["Code"] == "NoSuchEntity":
-                        user.tags = []
-                    else:
-                        logger.error(
-                            f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-                        )
-
-        except Exception as error:
-            logger.error(
-                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-            )
-
-        try:
-            for policy in self.policies:
-                try:
-                    if policy.type != "Inline":
-                        response = self.client.list_policy_tags(PolicyArn=policy.arn)[
-                            "Tags"
-                        ]
-                        policy.tags = response
-                except ClientError as error:
-                    if error.response["Error"]["Code"] == "NoSuchEntity":
-                        policy.tags = []
-                    else:
-                        logger.error(
-                            f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-                        )
-                except Exception as error:
-                    logger.error(
-                        f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-                    )
-
-        except Exception as error:
-            logger.error(
-                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-            )
-
-    def __get_last_accessed_services__(self):
+    def _get_last_accessed_services(self):
         logger.info("IAM - Getting Last Accessed Services ...")
         try:
             for user in self.users:
@@ -876,7 +940,75 @@ class IAM(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_access_keys_metadata__(self):
+    def _get_role_last_accessed_services(self):
+        """Retrieve service last accessed details for all IAM roles.
+
+        Uses a fire-all-then-collect pattern: all generate calls are
+        submitted first so the jobs run server-side in parallel, then
+        results are collected in a second pass.
+        """
+        logger.info("IAM - Getting Role Last Accessed Services ...")
+        try:
+            if self.roles is None:
+                return
+
+            # Phase 1: fire all generate requests
+            pending_jobs = []
+            for role in self.roles:
+                try:
+                    details = self.client.generate_service_last_accessed_details(
+                        Arn=role.arn
+                    )
+                    pending_jobs.append((role.name, role.arn, details["JobId"]))
+                except ClientError as error:
+                    if error.response["Error"]["Code"] == "NoSuchEntity":
+                        logger.warning(
+                            f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                        )
+                    else:
+                        logger.error(
+                            f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                        )
+                except Exception as error:
+                    logger.error(
+                        f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                    )
+
+            # Phase 2: collect results
+            max_retries = 60
+            for role_name, role_arn, job_id in pending_jobs:
+                try:
+                    retries = 0
+                    response = self.client.get_service_last_accessed_details(
+                        JobId=job_id
+                    )
+                    while response["JobStatus"] == "IN_PROGRESS":
+                        retries += 1
+                        if retries > max_retries:
+                            logger.warning(
+                                f"{self.region} -- Timeout waiting for service last accessed details for role {role_name}"
+                            )
+                            break
+                        sleep(1)
+                        response = self.client.get_service_last_accessed_details(
+                            JobId=job_id
+                        )
+                    if response["JobStatus"] == "COMPLETED":
+                        self.role_last_accessed_services[(role_name, role_arn)] = (
+                            response.get("ServicesLastAccessed", [])
+                        )
+
+                except Exception as error:
+                    logger.error(
+                        f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                    )
+
+        except Exception as error:
+            logger.error(
+                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
+    def _get_access_keys_metadata(self):
         logger.info("IAM - Getting Access Keys Metadata ...")
         try:
             for user in self.users:
@@ -905,7 +1037,7 @@ class IAM(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_user_temporary_credentials_usage__(self):
+    def _get_user_temporary_credentials_usage(self):
         logger.info("IAM - Getting User Temporary Credentials Usage ...")
         try:
             temporary_credentials_usage = False
@@ -938,6 +1070,83 @@ class IAM(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
+    def _list_organizations_features(self):
+        logger.info("IAM - List Organization Features...")
+        try:
+            organization_features = self.client.list_organizations_features()
+            self.organization_features = organization_features.get(
+                "EnabledFeatures", []
+            )
+        except ClientError as error:
+            if error.response["Error"]["Code"] == "OrganizationNotFoundException":
+                logger.warning(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            elif error.response["Error"]["Code"] == "ServiceAccessNotEnabledException":
+                logger.warning(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            elif (
+                error.response["Error"]["Code"]
+                == "OrganizationNotInAllFeaturesModeException"
+            ):
+                logger.warning(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            elif (
+                error.response["Error"]["Code"]
+                == "AccountNotManagementOrDelegatedAdministratorException"
+            ):
+                logger.warning(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+                self.organization_features = None
+            else:
+                logger.error(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+        except Exception as error:
+            logger.error(
+                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
+    def _list_service_specific_credentials(self):
+        logger.info("IAM - List Service Specific Credentials...")
+        try:
+            for user in self.users:
+                service_specific_credentials = (
+                    self.client.list_service_specific_credentials(UserName=user.name)
+                )
+                for credential in service_specific_credentials.get(
+                    "ServiceSpecificCredentials", []
+                ):
+                    credential["Arn"] = (
+                        f"arn:{self.audited_partition}:iam:{self.region}:{self.audited_account}:user/{user.name}/credential/{credential['ServiceSpecificCredentialId']}"
+                    )
+                    if not self.audit_resources or (
+                        is_resource_filtered(credential["Arn"], self.audit_resources)
+                    ):
+                        self.service_specific_credentials.append(
+                            ServiceSpecificCredential(
+                                arn=credential["Arn"],
+                                user=user,
+                                status=credential["Status"],
+                                create_date=credential["CreateDate"],
+                                service_user_name=credential.get("ServiceUserName"),
+                                service_credential_alias=credential.get(
+                                    "ServiceCredentialAlias"
+                                ),
+                                expiration_date=credential.get("ExpirationDate"),
+                                id=credential.get("ServiceSpecificCredentialId"),
+                                service_name=credential.get("ServiceName"),
+                                region=self.region,
+                            )
+                        )
+        except Exception as error:
+            logger.error(
+                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
 
 class MFADevice(BaseModel):
     serial_number: str
@@ -952,7 +1161,7 @@ class User(BaseModel):
     console_access: Optional[bool]
     attached_policies: list[dict] = []
     inline_policies: list[str] = []
-    tags: Optional[list] = []
+    tags: Optional[list]
 
 
 class Role(BaseModel):
@@ -962,7 +1171,21 @@ class Role(BaseModel):
     is_service_role: bool
     attached_policies: list[dict] = []
     inline_policies: list[str] = []
-    tags: Optional[list] = []
+    permissions_boundary: Optional[dict] = None
+    tags: Optional[list]
+
+
+class ServiceSpecificCredential(BaseModel):
+    arn: str
+    user: User
+    status: str
+    create_date: datetime
+    service_user_name: Optional[str]
+    service_credential_alias: Optional[str]
+    expiration_date: Optional[datetime]
+    id: str
+    service_name: str
+    region: str
 
 
 class Group(BaseModel):
@@ -991,6 +1214,7 @@ class Certificate(BaseModel):
     id: str
     arn: str
     expiration: datetime
+    tags: Optional[list]
 
 
 class Policy(BaseModel):
@@ -1002,3 +1226,9 @@ class Policy(BaseModel):
     attached: bool
     document: Optional[dict]
     tags: Optional[list] = []
+
+
+class SAMLProvider(BaseModel):
+    name: str
+    arn: str
+    tags: Optional[list]

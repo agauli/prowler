@@ -15,9 +15,15 @@ class Test_dms_instance_minor_version_upgrade_enabled:
         dms_client = mock.MagicMock
         dms_client.instances = []
 
-        with mock.patch(
-            "prowler.providers.aws.services.dms.dms_service.DMS",
-            new=dms_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.dms.dms_service.DMS",
+                new=dms_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.dms.dms_client.dms_client",
+                new=dms_client,
+            ),
         ):
             from prowler.providers.aws.services.dms.dms_instance_minor_version_upgrade_enabled.dms_instance_minor_version_upgrade_enabled import (
                 dms_instance_minor_version_upgrade_enabled,
@@ -40,12 +46,19 @@ class Test_dms_instance_minor_version_upgrade_enabled:
                 auto_minor_version_upgrade=False,
                 multi_az=True,
                 region=AWS_REGION_US_EAST_1,
+                tags=[{"Key": "Name", "Value": DMS_INSTANCE_NAME}],
             )
         )
 
-        with mock.patch(
-            "prowler.providers.aws.services.dms.dms_service.DMS",
-            new=dms_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.dms.dms_service.DMS",
+                new=dms_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.dms.dms_client.dms_client",
+                new=dms_client,
+            ),
         ):
             from prowler.providers.aws.services.dms.dms_instance_minor_version_upgrade_enabled.dms_instance_minor_version_upgrade_enabled import (
                 dms_instance_minor_version_upgrade_enabled,
@@ -62,6 +75,9 @@ class Test_dms_instance_minor_version_upgrade_enabled:
             assert result[0].region == AWS_REGION_US_EAST_1
             assert result[0].resource_id == DMS_INSTANCE_NAME
             assert result[0].resource_arn == DMS_INSTANCE_ARN
+            assert result[0].resource_tags == [
+                {"Key": "Name", "Value": DMS_INSTANCE_NAME}
+            ]
 
     def test_dms_instance_minor_version_upgrade_enabled(self):
         dms_client = mock.MagicMock
@@ -76,12 +92,19 @@ class Test_dms_instance_minor_version_upgrade_enabled:
                 auto_minor_version_upgrade=True,
                 multi_az=True,
                 region=AWS_REGION_US_EAST_1,
+                tags=[{"Key": "Name", "Value": DMS_INSTANCE_NAME}],
             )
         )
 
-        with mock.patch(
-            "prowler.providers.aws.services.dms.dms_service.DMS",
-            new=dms_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.dms.dms_service.DMS",
+                new=dms_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.dms.dms_client.dms_client",
+                new=dms_client,
+            ),
         ):
             from prowler.providers.aws.services.dms.dms_instance_minor_version_upgrade_enabled.dms_instance_minor_version_upgrade_enabled import (
                 dms_instance_minor_version_upgrade_enabled,
@@ -98,3 +121,6 @@ class Test_dms_instance_minor_version_upgrade_enabled:
             assert result[0].region == AWS_REGION_US_EAST_1
             assert result[0].resource_id == DMS_INSTANCE_NAME
             assert result[0].resource_arn == DMS_INSTANCE_ARN
+            assert result[0].resource_tags == [
+                {"Key": "Name", "Value": DMS_INSTANCE_NAME}
+            ]

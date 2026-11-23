@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 from slack_sdk import WebClient
@@ -5,6 +6,12 @@ from slack_sdk.web.base_client import SlackResponse
 
 from prowler.config.config import aws_logo, azure_logo, gcp_logo, square_logo_img
 from prowler.lib.logger import logger
+from prowler.lib.outputs.slack.exceptions.exceptions import (
+    SlackChannelNotFound,
+    SlackClientError,
+    SlackNoCredentialsError,
+)
+from prowler.providers.common.models import Connection
 
 
 class Slack:
@@ -43,6 +50,7 @@ class Slack:
                 username="Prowler",
                 icon_url=square_logo_img,
                 channel=f"#{self.channel}",
+                text="Prowler Scan Summary",
                 blocks=self.__create_message_blocks__(identity, logo, stats, args),
             )
             return response
@@ -50,7 +58,6 @@ class Slack:
             logger.error(
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
-            return error
 
     def __create_message_identity__(self, provider: Any):
         """
@@ -64,7 +71,7 @@ class Slack:
         - logo (str): The logo URL associated with the provider type.
         """
 
-        # TODO: support kubernetes
+        # TODO: support kubernetes, m365, github
         try:
             identity = ""
             logo = aws_logo
@@ -75,8 +82,11 @@ class Slack:
                 logo = gcp_logo
             elif provider.type == "azure":
                 printed_subscriptions = []
-                for key, value in provider.identity.subscriptions.items():
-                    intermediate = f"- *{key}: {value}*\n"
+                for (
+                    subscription_id,
+                    display_name,
+                ) in provider.identity.subscriptions.items():
+                    intermediate = f"- *{subscription_id}: {display_name}*\n"
                     printed_subscriptions.append(intermediate)
                 identity = f"Azure Subscriptions:\n{''.join(printed_subscriptions)}"
                 logo = azure_logo
@@ -100,6 +110,20 @@ class Slack:
             list: list of Slack message blocks.
         """
         try:
+            # A scan can legitimately produce no findings, in which case
+            # `findings_count` is 0 and the percentages below would raise
+            # `ZeroDivisionError`.
+            findings_count = stats["findings_count"]
+            pass_percentage = (
+                round(stats["total_pass"] / findings_count * 100, 2)
+                if findings_count
+                else 0
+            )
+            fail_percentage = (
+                round(stats["total_fail"] / findings_count * 100, 2)
+                if findings_count
+                else 0
+            )
             blocks = [
                 {
                     "type": "section",
@@ -118,14 +142,40 @@ class Slack:
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"\n:white_check_mark: *{stats['total_pass']} Passed findings* ({round(stats['total_pass'] / stats['findings_count'] * 100 , 2)}%)\n",
+                        "text": f"\n:white_check_mark: *{stats['total_pass']} Passed findings* ({pass_percentage}%)\n",
                     },
                 },
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"\n:x: *{stats['total_fail']} Failed findings* ({round(stats['total_fail'] / stats['findings_count'] * 100 , 2)}%)\n ",
+                        "text": (
+                            "*Severities:*\n"
+                            f"• *Critical:* {stats['total_critical_severity_pass']} "
+                            f"• *High:* {stats['total_high_severity_pass']} "
+                            f"• *Medium:* {stats['total_medium_severity_pass']} "
+                            f"• *Low:* {stats['total_low_severity_pass']}"
+                        ),
+                    },
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"\n:x: *{stats['total_fail']} Failed findings* ({fail_percentage}%)\n ",
+                    },
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            "*Severities:*\n"
+                            f"• *Critical:* {stats['total_critical_severity_fail']} "
+                            f"• *High:* {stats['total_high_severity_fail']} "
+                            f"• *Medium:* {stats['total_medium_severity_fail']} "
+                            f"• *Low:* {stats['total_low_severity_fail']}"
+                        ),
                     },
                 },
                 {
@@ -152,7 +202,7 @@ class Slack:
                     "accessory": {
                         "type": "button",
                         "text": {"type": "plain_text", "text": "Prowler :slack:"},
-                        "url": "https://join.slack.com/t/prowler-workspace/shared_invite/zt-1hix76xsl-2uq222JIXrC7Q8It~9ZNog",
+                        "url": "https://goto.prowler.com/slack",
                     },
                 },
                 {
@@ -204,3 +254,66 @@ class Slack:
             logger.error(
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
+
+    @staticmethod
+    def test_connection(
+        token: str,
+        channel: str,
+        raise_on_exception: bool = True,
+    ) -> Connection:
+        """
+        Test the Slack connection by validating the provided token and channel.
+
+        Args:
+            token (str): The Slack token to be tested.
+            channel (str): The Slack channel to be validated.
+
+        Returns:
+            Connection: A Connection object.
+        """
+        try:
+            client = WebClient(token=token)
+            # Test if the token is valid
+            auth_response = client.auth_test()
+            if auth_response["ok"]:
+                # Test if the channel is accessible
+                channels_response = client.conversations_info(
+                    token=token, channel=channel
+                )
+                if channels_response["ok"]:
+                    return Connection(is_connected=True)
+                else:
+                    exception = SlackChannelNotFound(
+                        file=os.path.basename(__file__),
+                        message=(
+                            channels_response["error"]
+                            if "error" in channels_response
+                            else "Unknown error"
+                        ),
+                    )
+                    if raise_on_exception:
+                        raise exception
+                    return Connection(error=exception)
+            else:
+                exception = SlackNoCredentialsError(
+                    file=os.path.basename(__file__),
+                    message=(
+                        auth_response["error"]
+                        if "error" in auth_response
+                        else "Unknown error"
+                    ),
+                )
+                if raise_on_exception:
+                    raise exception
+                return Connection(error=exception)
+
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+            if raise_on_exception:
+                raise SlackClientError(
+                    file=os.path.basename(__file__),
+                    original_exception=error,
+                ) from error
+            return Connection(error=error)

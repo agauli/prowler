@@ -2,13 +2,13 @@ import json
 from typing import Optional
 
 from botocore.client import ClientError
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
-available_organizations_policies = [
+AVAILABLE_ORGANIZATIONS_POLICIES = [
     "SERVICE_CONTROL_POLICY",
     "TAG_POLICY",
     "BACKUP_POLICY",
@@ -16,44 +16,50 @@ available_organizations_policies = [
 ]
 
 
-################## Organizations
 class Organizations(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
         super().__init__(__class__.__name__, provider)
-        self.organizations = []
-        self.policies = []
+        self.organization = None
+        self.policies = {}
         self.delegated_administrators = []
-        self.__describe_organization__()
+        self._describe_organization()
 
-    def __describe_organization__(self):
+    def _describe_organization(self):
         logger.info("Organizations - Describe Organization...")
 
         try:
-            # Check if Organizations is in-use
             try:
                 organization_desc = self.client.describe_organization()["Organization"]
                 organization_arn = organization_desc.get("Arn")
                 organization_id = organization_desc.get("Id")
                 organization_master_id = organization_desc.get("MasterAccountId")
-                # Fetch policies for organization:
-                organization_policies = self.__list_policies__()
-                # Fetch delegated administrators for organization:
+                organization_policies = self._list_policies()
                 organization_delegated_administrator = (
-                    self.__list_delegated_administrators__()
+                    self._list_delegated_administrators()
                 )
+                organization_enabled_service_principals = (
+                    self._list_aws_service_access_for_organization()
+                )
+                organization_delegated_service_principals = {}
+                for delegated_administrator in (
+                    organization_delegated_administrator or []
+                ):
+                    organization_delegated_service_principals[
+                        delegated_administrator.id
+                    ] = self._list_delegated_services_for_account(
+                        delegated_administrator.id
+                    )
             except ClientError as error:
                 if (
                     error.response["Error"]["Code"]
                     == "AWSOrganizationsNotInUseException"
                 ):
-                    self.organizations.append(
-                        Organization(
-                            arn=self.audited_account_arn,
-                            id="AWS Organization",
-                            status="NOT_AVAILABLE",
-                            master_id="",
-                        )
+                    self.organization = Organization(
+                        arn=self.get_unknown_arn(),
+                        id="unknown",
+                        status="NOT_AVAILABLE",
+                        master_id="",
                     )
                 else:
                     logger.error(
@@ -63,25 +69,22 @@ class Organizations(AWSService):
                 if not self.audit_resources or (
                     is_resource_filtered(organization_arn, self.audit_resources)
                 ):
-                    self.organizations.append(
-                        Organization(
-                            arn=organization_arn,
-                            id=organization_id,
-                            status="ACTIVE",
-                            master_id=organization_master_id,
-                            policies=organization_policies,
-                            delegated_administrators=organization_delegated_administrator,
-                        )
+                    self.organization = Organization(
+                        arn=organization_arn,
+                        id=organization_id,
+                        status="ACTIVE",
+                        master_id=organization_master_id,
+                        policies=organization_policies,
+                        delegated_administrators=organization_delegated_administrator,
+                        enabled_service_principals=organization_enabled_service_principals,
+                        delegated_service_principals=organization_delegated_service_principals,
                     )
                 else:
-                    # is filtered
-                    self.organizations.append(
-                        Organization(
-                            arn=self.audited_account_arn,
-                            id="AWS Organization",
-                            status="NOT_AVAILABLE",
-                            master_id="",
-                        )
+                    self.organization = Organization(
+                        arn=self.get_unknown_arn(),
+                        id="unknown",
+                        status="NOT_AVAILABLE",
+                        master_id="",
                     )
 
         except Exception as error:
@@ -89,23 +92,23 @@ class Organizations(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    # I'm using list_policies instead of list_policies_for_target, because the last one only returns "Attached directly" policies but not "Inherited from..." policies.
-    def __list_policies__(self):
+    def _list_policies(self):
         logger.info("Organizations - List policies...")
-
+        policies = {}
         try:
             list_policies_paginator = self.client.get_paginator("list_policies")
-            for policy_type in available_organizations_policies:
+            for policy_type in AVAILABLE_ORGANIZATIONS_POLICIES:
                 logger.info(
                     "Organizations - List policies... - Type: %s",
                     policy_type,
                 )
+                policies[policy_type] = []
                 for page in list_policies_paginator.paginate(Filter=policy_type):
                     for policy in page["Policies"]:
                         policy_id = policy.get("Id")
-                        policy_content = self.__describe_policy__(policy_id)
-                        policy_targets = self.__list_targets_for_policy__(policy_id)
-                        self.policies.append(
+                        policy_content = self._describe_policy(policy_id)
+                        policy_targets = self._list_targets_for_policy(policy_id)
+                        policies[policy_type].append(
                             Policy(
                                 arn=policy.get("Arn"),
                                 id=policy_id,
@@ -118,20 +121,24 @@ class Organizations(AWSService):
 
         except ClientError as error:
             if error.response["Error"]["Code"] == "AccessDeniedException":
-                self.policies = None
+                policies = None
+                logger.warning(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            else:
+                logger.error(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
 
         except Exception as error:
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-        finally:
-            return self.policies
+        return policies
 
-    def __describe_policy__(self, policy_id) -> dict:
+    def _describe_policy(self, policy_id) -> dict:
         logger.info("Organizations - Describe policy: %s ...", policy_id)
-
-        # This operation can be called only from the organization’s management account or by a member account that is a delegated administrator for an Amazon Web Services service.
         try:
             policy_content = {}
             if policy_id:
@@ -143,15 +150,14 @@ class Organizations(AWSService):
                 if isinstance(policy_content, str):
                     policy_content = json.loads(policy_content)
 
-            return policy_content  # This could be not be a dict, because json.loads could return a list or a string depending on the content of policy_content object.
-
+            return policy_content
         except Exception as error:
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
             return {}
 
-    def __list_targets_for_policy__(self, policy_id) -> list:
+    def _list_targets_for_policy(self, policy_id) -> list:
         logger.info("Organizations - List Targets for policy: %s ...", policy_id)
 
         try:
@@ -169,8 +175,8 @@ class Organizations(AWSService):
             )
             return []
 
-    def __list_delegated_administrators__(self):
-        logger.info("Organizations - List Delegated Administrators")
+    def _list_delegated_administrators(self):
+        logger.info("Organizations - List Delegated Administrators...")
 
         try:
             list_delegated_administrators_paginator = self.client.get_paginator(
@@ -190,16 +196,96 @@ class Organizations(AWSService):
                     )
 
         except ClientError as error:
+            # None (unknown) for any error: an empty list would read as "no administrators"
+            self.delegated_administrators = None
             if error.response["Error"]["Code"] == "AccessDeniedException":
-                self.delegated_administrators = None
+                logger.warning(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            else:
+                logger.error(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
 
         except Exception as error:
+            self.delegated_administrators = None
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-        finally:
-            return self.delegated_administrators
+        return self.delegated_administrators
+
+    def _list_aws_service_access_for_organization(self):
+        """Return the service principals with trusted access enabled, or None if unreadable."""
+        logger.info("Organizations - List AWS Service Access For Organization...")
+
+        enabled_service_principals = []
+        try:
+            list_aws_service_access_paginator = self.client.get_paginator(
+                "list_aws_service_access_for_organization"
+            )
+            for page in list_aws_service_access_paginator.paginate():
+                for enabled_service_principal in page["EnabledServicePrincipals"]:
+                    enabled_service_principals.append(
+                        enabled_service_principal["ServicePrincipal"]
+                    )
+
+        except ClientError as error:
+            enabled_service_principals = None
+            if error.response["Error"]["Code"] == "AccessDeniedException":
+                logger.warning(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            else:
+                logger.error(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+
+        except Exception as error:
+            enabled_service_principals = None
+            logger.error(
+                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
+        return enabled_service_principals
+
+    def _list_delegated_services_for_account(self, account_id):
+        """Return the service principals delegated to an account, or None if unreadable."""
+        logger.info(
+            "Organizations - List Delegated Services For Account: %s ...", account_id
+        )
+
+        delegated_service_principals = []
+        try:
+            list_delegated_services_paginator = self.client.get_paginator(
+                "list_delegated_services_for_account"
+            )
+            for page in list_delegated_services_paginator.paginate(
+                AccountId=account_id
+            ):
+                for delegated_service in page["DelegatedServices"]:
+                    delegated_service_principals.append(
+                        delegated_service["ServicePrincipal"]
+                    )
+
+        except ClientError as error:
+            delegated_service_principals = None
+            if error.response["Error"]["Code"] == "AccessDeniedException":
+                logger.warning(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            else:
+                logger.error(
+                    f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+
+        except Exception as error:
+            delegated_service_principals = None
+            logger.error(
+                f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+
+        return delegated_service_principals
 
 
 class Policy(BaseModel):
@@ -225,5 +311,7 @@ class Organization(BaseModel):
     id: str
     status: str
     master_id: str
-    policies: list[Policy] = None
+    policies: Optional[dict[str, list[Policy]]] = {}
     delegated_administrators: list[DelegatedAdministrator] = None
+    enabled_service_principals: Optional[list[str]] = None
+    delegated_service_principals: Optional[dict[str, Optional[list[str]]]] = None

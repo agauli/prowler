@@ -3,7 +3,9 @@ from uuid import uuid4
 
 from prowler.providers.azure.config import USER_ACCESS_ADMINISTRATOR_ROLE_ID
 from tests.providers.azure.azure_fixtures import (
+    AZURE_SUBSCRIPTION_DISPLAY,
     AZURE_SUBSCRIPTION_ID,
+    AZURE_SUBSCRIPTION_NAME,
     set_mocked_azure_provider,
 )
 
@@ -11,13 +13,17 @@ from tests.providers.azure.azure_fixtures import (
 class Test_app_function_identity_without_admin_privileges:
     def test_app_no_subscriptions(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges import (
                 app_function_identity_without_admin_privileges,
@@ -31,13 +37,17 @@ class Test_app_function_identity_without_admin_privileges:
 
     def test_app_subscription_empty(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges import (
                 app_function_identity_without_admin_privileges,
@@ -51,13 +61,17 @@ class Test_app_function_identity_without_admin_privileges:
 
     def test_app_function_no_identity(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges import (
                 app_function_identity_without_admin_privileges,
@@ -69,11 +83,12 @@ class Test_app_function_identity_without_admin_privileges:
             app_client.functions = {
                 AZURE_SUBSCRIPTION_ID: {
                     function_id: FunctionApp(
+                        id=function_id,
                         name="function1",
                         location="West Europe",
                         kind="functionapp,linux",
                         function_keys={},
-                        enviroment_variables={},
+                        environment_variables={},
                         identity=None,
                         public_access=False,
                         vnet_subnet_id=None,
@@ -88,17 +103,23 @@ class Test_app_function_identity_without_admin_privileges:
 
     def test_app_function_no_admin_roles(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         iam_client = mock.MagicMock
+        iam_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.app_client",
-            new=app_client,
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.iam_client",
-            new=iam_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.app_client",
+                new=app_client,
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.iam_client",
+                new=iam_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges import (
                 app_function_identity_without_admin_privileges,
@@ -114,11 +135,12 @@ class Test_app_function_identity_without_admin_privileges:
             app_client.functions = {
                 AZURE_SUBSCRIPTION_ID: {
                     function_id: FunctionApp(
+                        id=function_id,
                         name="function1",
                         location="West Europe",
                         kind="functionapp,linux",
                         function_keys={},
-                        enviroment_variables={},
+                        environment_variables={},
                         identity=mock.MagicMock(principal_id="123"),
                         public_access=False,
                         vnet_subnet_id=None,
@@ -129,24 +151,29 @@ class Test_app_function_identity_without_admin_privileges:
 
             iam_client.role_assignments = {
                 AZURE_SUBSCRIPTION_ID: {
-                    "1": RoleAssignment(
-                        role_id="1",
+                    "role-assignment-id-1": RoleAssignment(
+                        id="role-assignment-id-1",
+                        name="role-assignment-name-1",
+                        scope="/subscriptions/{}/resourceGroups/rg/providers/Microsoft.Web/sites/function1".format(
+                            AZURE_SUBSCRIPTION_ID
+                        ),
                         agent_id="123",
                         agent_type="User",
+                        role_id="role-id-1",
                     )
                 }
             }
 
             iam_client.roles = {
-                AZURE_SUBSCRIPTION_ID: [
-                    Role(
-                        id="1",
+                AZURE_SUBSCRIPTION_ID: {
+                    "role-id-1": Role(
+                        id="role-id-1",
                         name="role1",
-                        type="User",
+                        type="BuiltInRole",
                         assignable_scopes=[],
                         permissions=[],
                     )
-                ]
+                }
             }
 
             check = app_function_identity_without_admin_privileges()
@@ -155,7 +182,7 @@ class Test_app_function_identity_without_admin_privileges:
             assert result[0].status == "PASS"
             assert (
                 result[0].status_extended
-                == "Function function1 has a managed identity enabled but without admin privileges."
+                == f"Function function1 from subscription {AZURE_SUBSCRIPTION_DISPLAY} has a managed identity enabled but without admin privileges."
             )
             assert result[0].resource_id == function_id
             assert result[0].resource_name == "function1"
@@ -164,17 +191,23 @@ class Test_app_function_identity_without_admin_privileges:
 
     def test_app_function_admin_roles(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         iam_client = mock.MagicMock
+        iam_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.app_client",
-            new=app_client,
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.iam_client",
-            new=iam_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.app_client",
+                new=app_client,
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges.iam_client",
+                new=iam_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_function_identity_without_admin_privileges.app_function_identity_without_admin_privileges import (
                 app_function_identity_without_admin_privileges,
@@ -186,15 +219,16 @@ class Test_app_function_identity_without_admin_privileges:
             )
 
             function_id = str(uuid4())
-
+            function_scope = f"/subscriptions/{AZURE_SUBSCRIPTION_ID}/resourceGroups/rg/providers/Microsoft.Web/sites/function1"
             app_client.functions = {
                 AZURE_SUBSCRIPTION_ID: {
                     function_id: FunctionApp(
+                        id=function_id,
                         name="function1",
                         location="West Europe",
                         kind="functionapp,linux",
                         function_keys={},
-                        enviroment_variables={},
+                        environment_variables={},
                         identity=mock.MagicMock(principal_id="123"),
                         public_access=False,
                         vnet_subnet_id=None,
@@ -203,26 +237,33 @@ class Test_app_function_identity_without_admin_privileges:
                 }
             }
 
+            iam_client.subscriptions = {
+                AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME,
+            }
+
             iam_client.role_assignments = {
                 AZURE_SUBSCRIPTION_ID: {
-                    "1": RoleAssignment(
-                        role_id=USER_ACCESS_ADMINISTRATOR_ROLE_ID,
+                    "role-assignment-id-2": RoleAssignment(
+                        id="role-assignment-id-2",
+                        name="role-assignment-name-2",
+                        scope=function_scope,
                         agent_id="123",
                         agent_type="User",
+                        role_id=USER_ACCESS_ADMINISTRATOR_ROLE_ID,
                     )
                 }
             }
 
             iam_client.roles = {
-                AZURE_SUBSCRIPTION_ID: [
-                    Role(
-                        id=USER_ACCESS_ADMINISTRATOR_ROLE_ID,
+                AZURE_SUBSCRIPTION_ID: {
+                    f"/subscriptions/{AZURE_SUBSCRIPTION_ID}/providers/Microsoft.Authorization/roleDefinitions/{USER_ACCESS_ADMINISTRATOR_ROLE_ID}": Role(
+                        id=f"/subscriptions/{AZURE_SUBSCRIPTION_ID}/providers/Microsoft.Authorization/roleDefinitions/{USER_ACCESS_ADMINISTRATOR_ROLE_ID}",
                         name="User Access Administrator",
-                        type="User",
+                        type="BuiltInRole",
                         assignable_scopes=[],
                         permissions=[],
-                    )
-                ]
+                    ),
+                }
             }
 
             check = app_function_identity_without_admin_privileges()
@@ -231,7 +272,7 @@ class Test_app_function_identity_without_admin_privileges:
             assert result[0].status == "FAIL"
             assert (
                 result[0].status_extended
-                == "Function function1 has a managed identity enabled and it is configure with admin privileges using role User Access Administrator."
+                == f"Function function1 from subscription {AZURE_SUBSCRIPTION_DISPLAY} has a managed identity enabled and it is configure with admin privileges using role User Access Administrator."
             )
             assert result[0].resource_id == function_id
             assert result[0].resource_name == "function1"

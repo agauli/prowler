@@ -1,15 +1,16 @@
+import os
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
-from prowler.providers.aws.lib.arn.error import RoleArnParsingFailedMissingFields
+from prowler.providers.aws.exceptions.exceptions import AWSIAMRoleARNMissingFieldsError
 
 
 class ARN(BaseModel):
     arn: str
     partition: str
     service: str
-    region: Optional[str]  # In IAM ARN's do not have region
+    region: Optional[str] = None  # In IAM ARN's do not have region
     account_id: str
     resource: str
     resource_type: str
@@ -18,7 +19,7 @@ class ARN(BaseModel):
         # Validate the ARN
         ## Check that arn starts with arn
         if not arn.startswith("arn:"):
-            raise RoleArnParsingFailedMissingFields
+            raise AWSIAMRoleARNMissingFieldsError(file=os.path.basename(__file__))
         ## Retrieve fields
         arn_elements = arn.split(":", 5)
         data = {

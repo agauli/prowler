@@ -1,20 +1,20 @@
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
+from prowler.providers.gcp.config import DEFAULT_RETRY_ATTEMPTS
 from prowler.providers.gcp.gcp_provider import GcpProvider
 from prowler.providers.gcp.lib.service.service import GCPService
 
 
-################## GKE
 class GKE(GCPService):
     def __init__(self, provider: GcpProvider):
         super().__init__("container", provider, api_version="v1beta1")
         self.locations = []
-        self.__get_locations__()
+        self._get_locations()
         self.clusters = {}
-        self.__threading_call__(self.__get_clusters__, self.locations)
+        self.__threading_call__(self._get_clusters, self.locations)
 
-    def __get_locations__(self):
+    def _get_locations(self):
         for project_id in self.project_ids:
             try:
                 request = (
@@ -22,7 +22,7 @@ class GKE(GCPService):
                     .locations()
                     .list(parent="projects/" + project_id)
                 )
-                response = request.execute()
+                response = request.execute(num_retries=DEFAULT_RETRY_ATTEMPTS)
 
                 for location in response["locations"]:
                     self.locations.append(
@@ -34,7 +34,7 @@ class GKE(GCPService):
                     f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                 )
 
-    def __get_clusters__(self, location):
+    def _get_clusters(self, location):
         try:
             request = (
                 self.client.projects()
@@ -44,7 +44,10 @@ class GKE(GCPService):
                     parent=f"projects/{location.project_id}/locations/{location.name}"
                 )
             )
-            response = request.execute(http=self.__get_AuthorizedHttp_client__())
+            response = request.execute(
+                http=self.__get_AuthorizedHttp_client__(),
+                num_retries=DEFAULT_RETRY_ATTEMPTS,
+            )
             for cluster in response.get("clusters", []):
                 node_pools = []
                 for node_pool in cluster["nodePools"]:
@@ -60,6 +63,7 @@ class GKE(GCPService):
                     name=cluster["name"],
                     id=cluster["id"],
                     location=cluster["location"],
+                    region=cluster["location"].rsplit("-", 1)[0],
                     service_account=cluster["nodeConfig"]["serviceAccount"],
                     node_pools=node_pools,
                     project_id=location.project_id,
@@ -85,6 +89,7 @@ class NodePool(BaseModel):
 class Cluster(BaseModel):
     name: str
     id: str
+    region: str
     location: str
     service_account: str
     node_pools: list[NodePool]

@@ -1,15 +1,12 @@
 import json
 import os
 import pathlib
-import traceback
-from argparse import Namespace
 from importlib.machinery import FileFinder
-from logging import DEBUG, ERROR
+from logging import ERROR
 from pkgutil import ModuleInfo
 from unittest import mock
 
 from boto3 import client
-from colorama import Fore, Style
 from mock import Mock, patch
 from moto import mock_aws
 
@@ -17,19 +14,22 @@ from prowler.lib.check.check import (
     exclude_checks_to_run,
     exclude_services_to_run,
     execute,
+    execute_checks,
     list_categories,
     list_checks_json,
-    list_modules,
     list_services,
+    load_custom_checks_metadata,
     parse_checks_from_file,
     parse_checks_from_folder,
-    recover_checks_from_provider,
-    recover_checks_from_service,
     remove_custom_checks_module,
-    run_check,
     update_audit_metadata,
 )
-from prowler.lib.check.models import load_check_metadata
+from prowler.lib.check.models import CheckMetadata, load_check_metadata
+from prowler.lib.check.utils import (
+    list_modules,
+    recover_checks_from_provider,
+    recover_checks_from_service,
+)
 from prowler.providers.aws.aws_provider import AwsProvider
 from prowler.providers.aws.services.accessanalyzer.accessanalyzer_service import (
     Analyzer,
@@ -412,7 +412,7 @@ class TestCheck:
                 },
                 "expected": {
                     "CheckID": "iam_user_accesskey_unused",
-                    "CheckTitle": "Ensure Access Keys unused are disabled",
+                    "CheckTitle": "Access Keys unused should be disabled",
                     "ServiceName": "iam",
                     "Severity": "low",
                 },
@@ -475,8 +475,7 @@ class TestCheck:
             },
         ]
 
-        arguments = Namespace()
-        aws_provider = AwsProvider(arguments)
+        aws_provider = AwsProvider()
         for test in test_cases:
             check_folder = test["input"]["path"]
             provider = test["input"]["provider"]
@@ -484,6 +483,49 @@ class TestCheck:
                 parse_checks_from_folder(aws_provider, check_folder) == test["expected"]
             )
             remove_custom_checks_module(check_folder, provider)
+
+    def test_load_custom_checks_metadata(self, tmp_path):
+        """Test loading check metadata from a custom checks folder."""
+        check_name = "custom_test_check"
+        check_folder = tmp_path / check_name
+        check_folder.mkdir()
+
+        metadata = {
+            "Provider": "aws",
+            "CheckID": check_name,
+            "CheckTitle": "Test Custom Check",
+            "CheckType": [],
+            "ServiceName": "custom",
+            "SubServiceName": "",
+            "ResourceIdTemplate": "arn:aws:custom:::resource",
+            "Severity": "low",
+            "ResourceType": "AwsCustomResource",
+            "Description": "A test custom check",
+            "Risk": "Test risk",
+            "RelatedUrl": "",
+            "Remediation": {
+                "Code": {"CLI": "", "NativeIaC": "", "Other": "", "Terraform": ""},
+                "Recommendation": {"Text": "", "Url": ""},
+            },
+            "Categories": [],
+            "DependsOn": [],
+            "RelatedTo": [],
+            "Notes": "",
+        }
+        metadata_file = check_folder / f"{check_name}.metadata.json"
+        metadata_file.write_text(json.dumps(metadata))
+
+        result = load_custom_checks_metadata(str(tmp_path))
+
+        assert check_name in result
+        assert result[check_name].CheckID == check_name
+        assert result[check_name].Provider == "aws"
+        assert result[check_name].Severity == "low"
+
+    def test_load_custom_checks_metadata_nonexistent_path(self):
+        """Test that nonexistent paths return empty dict."""
+        result = load_custom_checks_metadata("/nonexistent/path/to/checks")
+        assert result == {}
 
     def test_exclude_checks_to_run(self):
         test_cases = [
@@ -572,12 +614,12 @@ class TestCheck:
             "forensics-ready",
             "encryption",
             "internet-exposed",
-            "trustboundaries",
+            "trust-boundaries",
         }
         listed_categories = list_categories(test_bulk_checks_metadata)
         assert listed_categories == expected_categories
 
-    @patch("prowler.lib.check.check.list_modules", new=mock_list_modules)
+    @patch("prowler.lib.check.utils.list_modules", new=mock_list_modules)
     def test_recover_checks_from_provider(self):
         provider = "azure"
         service = "storage"
@@ -638,7 +680,7 @@ class TestCheck:
         returned_checks = recover_checks_from_provider(provider, service)
         assert returned_checks == expected_checks
 
-    @patch("prowler.lib.check.check.walk_packages", new=mock_walk_packages)
+    @patch("prowler.lib.check.utils.walk_packages", new=mock_walk_packages)
     def test_list_modules(self):
         provider = "azure"
         service = "storage"
@@ -646,7 +688,7 @@ class TestCheck:
         assert expected_modules == expected_packages
 
     @patch(
-        "prowler.lib.check.check.recover_checks_from_provider",
+        "prowler.lib.check.utils.recover_checks_from_provider",
         new=mock_recover_checks_from_aws_provider,
     )
     def test_recover_checks_from_service(self):
@@ -815,17 +857,27 @@ class TestCheck:
                 region=AWS_REGION_US_EAST_1,
             )
         ]
-        with mock.patch(
-            "prowler.providers.aws.services.accessanalyzer.accessanalyzer_service.AccessAnalyzer",
-            accessanalyzer_client,
+        finding = Mock()
+        finding.status = "PASS"
+        findings = [finding]
+        check = Mock()
+        check.CheckID = "test-check"
+        check.execute = Mock(return_value=findings)
+
+        with (
+            patch("prowler.lib.check.check.execute", return_value=findings),
+            patch(
+                "prowler.providers.aws.services.accessanalyzer.accessanalyzer_service.AccessAnalyzer",
+                accessanalyzer_client,
+            ),
         ):
             findings = execute(
-                service="accessanalyzer",
-                check_name="accessanalyzer_enabled",
+                check=check,
                 global_provider=set_mocked_aws_provider(
                     expected_checks=["accessanalyzer_enabled"]
                 ),
                 custom_checks_metadata=None,
+                output_options=None,
             )
             assert len(findings) == 1
 
@@ -843,105 +895,24 @@ class TestCheck:
             )
         ]
         status = ["PASS"]
+        check = mock.MagicMock()
+        check.CheckID = "accessanalyzer_enabled"
+        check.Status = "PASS"
+        output_options = mock.MagicMock()
+        output_options.status = status
         with mock.patch(
             "prowler.providers.aws.services.accessanalyzer.accessanalyzer_service.AccessAnalyzer",
             accessanalyzer_client,
         ):
             findings = execute(
-                service="accessanalyzer",
-                check_name="accessanalyzer_enabled",
+                check=check,
                 global_provider=set_mocked_aws_provider(
-                    status=status, expected_checks=["accessanalyzer_enabled"]
+                    expected_checks=["accessanalyzer_enabled"]
                 ),
                 custom_checks_metadata=None,
+                output_options=output_options,
             )
             assert len(findings) == 0
-
-    def test_run_check(self, caplog):
-        caplog.set_level(DEBUG)
-
-        findings = []
-        check = Mock()
-        check.CheckID = "test-check"
-        check.execute = Mock(return_value=findings)
-
-        with patch("prowler.lib.check.check.execute", return_value=findings):
-            assert run_check(check) == findings
-            assert caplog.record_tuples == [
-                (
-                    "root",
-                    DEBUG,
-                    f"Executing check: {check.CheckID}",
-                )
-            ]
-
-    def test_run_check_verbose(self, capsys):
-
-        findings = []
-        check = Mock()
-        check.CheckID = "test-check"
-        check.ServiceName = "test-service"
-        check.Severity = "test-severity"
-        check.execute = Mock(return_value=findings)
-
-        with patch("prowler.lib.check.check.execute", return_value=findings):
-            assert run_check(check, verbose=True) == findings
-            assert (
-                capsys.readouterr().out
-                == f"\nCheck ID: {check.CheckID} - {Fore.MAGENTA}{check.ServiceName}{Fore.YELLOW} [{check.Severity}]{Style.RESET_ALL}\n"
-            )
-
-    def test_run_check_exception_only_logs(self, caplog):
-        caplog.set_level(ERROR)
-
-        findings = []
-        check = Mock()
-        check.CheckID = "test-check"
-        check.ServiceName = "test-service"
-        check.Severity = "test-severity"
-        error = Exception()
-        check.execute = Mock(side_effect=error)
-
-        with patch("prowler.lib.check.check.execute", return_value=findings):
-            assert run_check(check, only_logs=True) == findings
-            assert caplog.record_tuples == [
-                (
-                    "root",
-                    ERROR,
-                    f"{check.CheckID} -- {error.__class__.__name__}[{traceback.extract_tb(error.__traceback__)[-1].lineno}]: {error}",
-                )
-            ]
-
-    def test_run_check_exception(self, caplog, capsys):
-        caplog.set_level(ERROR)
-
-        findings = []
-        check = Mock()
-        check.CheckID = "test-check"
-        check.ServiceName = "test-service"
-        check.Severity = "test-severity"
-        error = Exception()
-        check.execute = Mock(side_effect=error)
-
-        with patch("prowler.lib.check.check.execute", return_value=findings):
-            assert (
-                run_check(
-                    check,
-                    verbose=False,
-                )
-                == findings
-            )
-            assert caplog.record_tuples == [
-                (
-                    "root",
-                    ERROR,
-                    f"{check.CheckID} -- {error.__class__.__name__}[{traceback.extract_tb(error.__traceback__)[-1].lineno}]: {error}",
-                )
-            ]
-            assert (
-                capsys.readouterr().out
-                == f"Something went wrong in {check.CheckID}, please use --log-level ERROR\n"
-            )
 
     def test_aws_checks_metadata_is_valid(self):
         # Check if the checkID in the metadata.json of the checks is correct
@@ -987,7 +958,126 @@ class TestCheck:
         )
         self.verify_metadata_check_id(base_directory)
 
+    def test_alibabacloud_checks_metadata_is_valid(self):
+        base_directory = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../",
+                "prowler/providers/alibabacloud/services",
+            )
+        )
+        self.verify_metadata_check_id(base_directory)
+
+    def test_cloudflare_checks_metadata_is_valid(self):
+        base_directory = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../",
+                "prowler/providers/cloudflare/services",
+            )
+        )
+        self.verify_metadata_check_id(base_directory)
+
+    def test_github_checks_metadata_is_valid(self):
+        base_directory = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../",
+                "prowler/providers/github/services",
+            )
+        )
+        self.verify_metadata_check_id(base_directory)
+
+    def test_googleworkspace_checks_metadata_is_valid(self):
+        base_directory = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../",
+                "prowler/providers/googleworkspace/services",
+            )
+        )
+        self.verify_metadata_check_id(base_directory)
+
+    def test_m365_checks_metadata_is_valid(self):
+        base_directory = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../",
+                "prowler/providers/m365/services",
+            )
+        )
+        self.verify_metadata_check_id(base_directory)
+
+    def test_mongodbatlas_checks_metadata_is_valid(self):
+        base_directory = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../",
+                "prowler/providers/mongodbatlas/services",
+            )
+        )
+        self.verify_metadata_check_id(base_directory)
+
+    def test_nhn_checks_metadata_is_valid(self):
+        base_directory = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../",
+                "prowler/providers/nhn/services",
+            )
+        )
+        self.verify_metadata_check_id(base_directory)
+
+    def test_openstack_checks_metadata_is_valid(self):
+        base_directory = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../",
+                "prowler/providers/openstack/services",
+            )
+        )
+        self.verify_metadata_check_id(base_directory)
+
+    def test_oraclecloud_checks_metadata_is_valid(self):
+        base_directory = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../",
+                "prowler/providers/oraclecloud/services",
+            )
+        )
+        self.verify_metadata_check_id(base_directory)
+
+    def test_vercel_checks_metadata_is_valid(self):
+        base_directory = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../",
+                "prowler/providers/vercel/services",
+            )
+        )
+        self.verify_metadata_check_id(base_directory)
+
+    def test_vercel_checks_metadata_use_canonical_hub_urls(self):
+        base_directory = pathlib.Path(__file__).resolve().parents[3] / "prowler"
+        provider_path = base_directory / "providers" / "vercel" / "services"
+
+        invalid_urls = []
+
+        for metadata_file_path in provider_path.rglob("*.metadata.json"):
+            with metadata_file_path.open("r") as metadata_file:
+                data = json.load(metadata_file)
+
+            recommendation = data.get("Remediation", {}).get("Recommendation", {})
+            url = recommendation.get("Url", "")
+
+            if url.startswith("https://hub.prowler.com/checks/vercel/"):
+                invalid_urls.append(f"{metadata_file_path}: {url}")
+
+        assert not invalid_urls, "\n".join(invalid_urls)
+
     def verify_metadata_check_id(self, provider_path):
+        errors = []
         # Walk through the base directory to find all service directories
         for root, dirs, _ in os.walk(provider_path):
             # We only want to look at directories that are direct children of the base directory
@@ -1013,6 +1103,112 @@ class TestCheck:
                                 check_id = data.get("CheckID", None)
 
                                 # Compare CheckID to the check name
-                                assert (
-                                    check_id == check_dir
-                                ), f"CheckID in metadata does not match the check name in {check_directory}. Found CheckID: {check_id}"
+                                if check_id != check_dir:
+                                    errors.append(
+                                        f"CheckID in metadata does not match the check name in {check_directory}. Found CheckID: {check_id}"
+                                    )
+
+                                # Validate metadata against Pydantic validators
+                                try:
+                                    CheckMetadata.parse_file(metadata_file_path)
+                                except Exception as e:
+                                    errors.append(
+                                        f"Metadata validation failed for {metadata_file_path}: {e}"
+                                    )
+
+        assert not errors, "\n\n".join(errors)
+
+    def test_execute_oraclecloud_mutelist_passes_tenancy_id(self):
+        """Test that execute() passes tenancy_id to is_finding_muted for OCI provider."""
+        tenancy_id = "ocid1.tenancy.oc1..aaaaaaaexample"
+
+        finding = Mock()
+        finding.status = "PASS"
+        finding.muted = False
+
+        check = Mock()
+        check.CheckID = "oci_test_check"
+        check.execute = Mock(return_value=[finding])
+
+        provider = mock.MagicMock()
+        provider.type = "oraclecloud"
+        provider.identity.tenancy_id = tenancy_id
+        provider.mutelist.mutelist = {"Accounts": {tenancy_id: {}}}
+        provider.mutelist.is_finding_muted = Mock(return_value=True)
+
+        findings = execute(
+            check=check,
+            global_provider=provider,
+            custom_checks_metadata=None,
+            output_options=None,
+        )
+
+        provider.mutelist.is_finding_muted.assert_called_once_with(
+            tenancy_id=tenancy_id,
+            finding=finding,
+        )
+        assert findings[0].muted is True
+
+    def test_execute_azure_mutelist_passes_subscription_id_and_name(self):
+        """Test that execute() passes Azure subscription ID and display name."""
+        subscription_id = "12345678-1234-1234-1234-123456789012"
+        subscription_name = "subscription_1"
+
+        finding = Mock()
+        finding.status = "PASS"
+        finding.muted = False
+        finding.subscription = subscription_id
+
+        check = Mock()
+        check.CheckID = "azure_test_check"
+        check.execute = Mock(return_value=[finding])
+
+        provider = mock.MagicMock()
+        provider.type = "azure"
+        provider.identity.subscriptions = {subscription_id: subscription_name}
+        provider.mutelist.mutelist = {"Accounts": {subscription_name: {}}}
+        provider.mutelist.is_finding_muted = Mock(return_value=True)
+
+        findings = execute(
+            check=check,
+            global_provider=provider,
+            custom_checks_metadata=None,
+            output_options=None,
+        )
+
+        provider.mutelist.is_finding_muted.assert_called_once_with(
+            subscription_id=subscription_id,
+            subscription_name=subscription_name,
+            finding=finding,
+        )
+        assert findings[0].muted is True
+
+    def test_execute_check_exception_only_logs(self, caplog):
+        caplog.set_level(ERROR)
+
+        findings = []
+        check = Mock()
+        checks = ["test-check"]
+
+        provider = mock.MagicMock()
+        provider.type = "aws"
+
+        output_options = mock.MagicMock()
+        output_options.only_logs = True
+        error = Exception()
+        check.execute = Mock(side_effect=error)
+
+        with patch("prowler.lib.check.check.execute", return_value=findings):
+            assert (
+                execute_checks(
+                    checks,
+                    provider,
+                    custom_checks_metadata=None,
+                    config_file=None,
+                    output_options=output_options,
+                )
+                == findings
+            )
+            assert caplog.record_tuples == [
+                ("root", 40, f"Check '{checks[0]}' was not found for the AWS provider")
+            ]

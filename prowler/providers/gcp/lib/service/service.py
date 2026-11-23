@@ -2,12 +2,12 @@ import threading
 
 import google_auth_httplib2
 import httplib2
-from colorama import Fore, Style
 from google.oauth2.credentials import Credentials
 from googleapiclient import discovery
 from googleapiclient.discovery import Resource
 
 from prowler.lib.logger import logger
+from prowler.providers.gcp.config import DEFAULT_RETRY_ATTEMPTS
 from prowler.providers.gcp.gcp_provider import GcpProvider
 
 
@@ -28,12 +28,22 @@ class GCPService:
         self.client = self.__generate_client__(
             self.service, api_version, self.credentials
         )
+        # Audited projects where this service's API is definitively DISABLED,
+        # and projects whose API activation state could not be determined;
+        # both are excluded from project_ids.
+        self.api_disabled_project_ids: set = set()
+        self.api_state_unknown_project_ids: set = set()
         # Only project ids that have their API enabled will be scanned
-        self.project_ids = self.__is_api_active__(provider.project_ids)
+        if provider.skip_api_check:
+            self.project_ids = provider.project_ids
+        else:
+            self.project_ids = self.__is_api_active__(provider.project_ids)
+        self.projects = provider.projects
+        self.default_project_id = provider.default_project_id
         self.audit_config = provider.audit_config
         self.fixer_config = provider.fixer_config
 
-    def __get_client__(self):
+    def _get_client(self):
         return self.client
 
     def __threading_call__(self, call, iterator):
@@ -54,18 +64,22 @@ class GCPService:
         project_ids = []
         for project_id in audited_project_ids:
             try:
-                client = discovery.build("serviceusage", "v1")
+                client = discovery.build(
+                    "serviceusage", "v1", credentials=self.credentials
+                )
                 request = client.services().get(
                     name=f"projects/{project_id}/services/{self.service}.googleapis.com"
                 )
-                response = request.execute()
+                response = request.execute(num_retries=DEFAULT_RETRY_ATTEMPTS)
                 if response.get("state") != "DISABLED":
                     project_ids.append(project_id)
                 else:
-                    print(
-                        f"\n{Fore.YELLOW}{self.service} API {Style.RESET_ALL}has not been used in project {project_id} before or it is disabled.\nEnable it by visiting https://console.developers.google.com/apis/api/{self.service}.googleapis.com/overview?project={project_id} then retry."
+                    self.api_disabled_project_ids.add(project_id)
+                    logger.error(
+                        f"{self.service} API has not been used in project {project_id} before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/{self.service}.googleapis.com/overview?project={project_id} then retry."
                     )
             except Exception as error:
+                self.api_state_unknown_project_ids.add(project_id)
                 logger.error(
                     f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                 )
@@ -78,7 +92,12 @@ class GCPService:
         credentials: Credentials,
     ) -> Resource:
         try:
-            return discovery.build(service, api_version, credentials=credentials)
+            return discovery.build(
+                service,
+                api_version,
+                credentials=credentials,
+                num_retries=DEFAULT_RETRY_ATTEMPTS,
+            )
         except Exception as error:
             logger.error(
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"

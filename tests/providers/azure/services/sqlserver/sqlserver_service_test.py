@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from azure.mgmt.sql.models import (
     EncryptionProtector,
@@ -16,6 +16,8 @@ from prowler.providers.azure.services.sqlserver.sqlserver_service import (
 )
 from tests.providers.azure.azure_fixtures import (
     AZURE_SUBSCRIPTION_ID,
+    RESOURCE_GROUP,
+    RESOURCE_GROUP_LIST,
     set_mocked_azure_provider,
 )
 
@@ -54,18 +56,18 @@ def mock_sqlserver_get_sql_servers(_):
 
 
 @patch(
-    "prowler.providers.azure.services.sqlserver.sqlserver_service.SQLServer.__get_sql_servers__",
+    "prowler.providers.azure.services.sqlserver.sqlserver_service.SQLServer._get_sql_servers",
     new=mock_sqlserver_get_sql_servers,
 )
 class Test_SqlServer_Service:
-    def test__get_client__(self):
+    def test_get_client(self):
         sql_server = SQLServer(set_mocked_azure_provider())
         assert (
             sql_server.clients[AZURE_SUBSCRIPTION_ID].__class__.__name__
             == "SqlManagementClient"
         )
 
-    def test__get_sql_servers__(self):
+    def test_get_sql_servers(self):
         database = Database(
             id="id",
             name="name",
@@ -117,7 +119,7 @@ class Test_SqlServer_Service:
             == "ServerVulnerabilityAssessment"
         )
 
-    def test__get_databases__(self):
+    def test_get_databases(self):
         sql_server = SQLServer(set_mocked_azure_provider())
         assert (
             sql_server.sql_servers[AZURE_SUBSCRIPTION_ID][0]
@@ -147,7 +149,7 @@ class Test_SqlServer_Service:
             == "TransparentDataEncryption"
         )
 
-    def test__get_transparent_data_encryption__(self):
+    def test_get_transparent_data_encryption(self):
         sql_server = SQLServer(set_mocked_azure_provider())
         assert (
             sql_server.sql_servers[AZURE_SUBSCRIPTION_ID][0]
@@ -177,10 +179,10 @@ class Test_SqlServer_Service:
             == "AzureKeyVault"
         )
 
-    def test__get_resource_group__(self):
+    def test_get_resource_group(self):
         id = "/subscriptions/subscription_id/resourceGroups/resource_group/providers/Microsoft.Sql/servers/sql_server"
         sql_server = SQLServer(set_mocked_azure_provider())
-        assert sql_server.__get_resource_group__(id) == "resource_group"
+        assert sql_server._get_resource_group(id) == "resource_group"
 
     def test__get_vulnerability_assessment__(self):
         sql_server = SQLServer(set_mocked_azure_provider())
@@ -198,7 +200,7 @@ class Test_SqlServer_Service:
             == storage_container_path
         )
 
-    def test__get_server_blob_auditing_policies__(self):
+    def test_get_server_blob_auditing_policies(self):
         sql_server = SQLServer(set_mocked_azure_provider())
         auditing_policies = ServerBlobAuditingPolicy(state="Disabled")
         assert (
@@ -212,7 +214,7 @@ class Test_SqlServer_Service:
             == auditing_policies
         )
 
-    def test__get_firewall_rules__(self):
+    def test_get_firewall_rules(self):
         sql_server = SQLServer(set_mocked_azure_provider())
         firewall_rules = FirewallRule(name="name")
         assert (
@@ -226,7 +228,7 @@ class Test_SqlServer_Service:
             == firewall_rules
         )
 
-    def test__get_server_security_alert_policies__(self):
+    def test_get_server_security_alert_policies(self):
         sql_server = SQLServer(set_mocked_azure_provider())
         security_alert_policies = ServerSecurityAlertPolicy(state="Disabled")
         assert (
@@ -244,4 +246,101 @@ class Test_SqlServer_Service:
                 0
             ].security_alert_policies.state
             == "Disabled"
+        )
+
+
+class Test_SQLServer_get_sql_servers:
+    def test_get_sql_servers_no_resource_groups(self):
+        mock_client = MagicMock()
+        mock_client.servers.list.return_value = []
+
+        with patch(
+            "prowler.providers.azure.services.sqlserver.sqlserver_service.SQLServer._get_sql_servers",
+            return_value={},
+        ):
+            sql_server = SQLServer(set_mocked_azure_provider())
+
+        sql_server.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        sql_server.resource_groups = None
+
+        result = sql_server._get_sql_servers()
+
+        mock_client.servers.list.assert_called_once()
+        mock_client.servers.list_by_resource_group.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_sql_servers_with_resource_group(self):
+        mock_client = MagicMock()
+        mock_client.servers.list_by_resource_group.return_value = []
+
+        with patch(
+            "prowler.providers.azure.services.sqlserver.sqlserver_service.SQLServer._get_sql_servers",
+            return_value={},
+        ):
+            sql_server = SQLServer(set_mocked_azure_provider())
+
+        sql_server.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        sql_server.resource_groups = {AZURE_SUBSCRIPTION_ID: [RESOURCE_GROUP]}
+
+        result = sql_server._get_sql_servers()
+
+        mock_client.servers.list_by_resource_group.assert_called_once_with(
+            resource_group_name=RESOURCE_GROUP
+        )
+        mock_client.servers.list.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_sql_servers_empty_resource_group_for_subscription(self):
+        mock_client = MagicMock()
+
+        with patch(
+            "prowler.providers.azure.services.sqlserver.sqlserver_service.SQLServer._get_sql_servers",
+            return_value={},
+        ):
+            sql_server = SQLServer(set_mocked_azure_provider())
+
+        sql_server.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        sql_server.resource_groups = {AZURE_SUBSCRIPTION_ID: []}
+
+        result = sql_server._get_sql_servers()
+
+        mock_client.servers.list_by_resource_group.assert_not_called()
+        mock_client.servers.list.assert_not_called()
+        assert result[AZURE_SUBSCRIPTION_ID] == []
+
+    def test_get_sql_servers_with_multiple_resource_groups(self):
+        mock_client = MagicMock()
+        mock_client.servers.list_by_resource_group.return_value = []
+
+        with patch(
+            "prowler.providers.azure.services.sqlserver.sqlserver_service.SQLServer._get_sql_servers",
+            return_value={},
+        ):
+            sql_server = SQLServer(set_mocked_azure_provider())
+
+        sql_server.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        sql_server.resource_groups = {AZURE_SUBSCRIPTION_ID: RESOURCE_GROUP_LIST}
+
+        result = sql_server._get_sql_servers()
+
+        assert mock_client.servers.list_by_resource_group.call_count == 2
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_sql_servers_with_mixed_case_resource_group(self):
+        mock_client = MagicMock()
+        mock_client.servers.list_by_resource_group.return_value = []
+
+        with patch(
+            "prowler.providers.azure.services.sqlserver.sqlserver_service.SQLServer._get_sql_servers",
+            return_value={},
+        ):
+            sql_server = SQLServer(set_mocked_azure_provider())
+
+        sql_server.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        sql_server.resource_groups = {AZURE_SUBSCRIPTION_ID: ["RG"]}
+
+        sql_server._get_sql_servers()
+
+        mock_client.servers.list_by_resource_group.assert_called_once_with(
+            resource_group_name="RG"
         )

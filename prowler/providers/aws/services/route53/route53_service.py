@@ -1,25 +1,34 @@
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
 
-################## Route53
 class Route53(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
         super().__init__(__class__.__name__, provider, global_service=True)
         self.hosted_zones = {}
         self.record_sets = []
-        self.__list_hosted_zones__()
-        self.__list_query_logging_configs__()
-        self.__list_tags_for_resource__()
-        self.__list_resource_record_sets__()
+        self.all_account_elastic_ips = []
+        self._list_hosted_zones()
+        self._list_query_logging_configs()
+        self._list_tags_for_resource()
+        self._list_resource_record_sets()
+        # Gather Elastic IPs from all regions only when the --region flag is used,
+        # since EC2 service will only have EIPs from the specified region(s) but
+        # Route53 is global and can reference EIPs from any region.
+        if (
+            "route53_dangling_ip_subdomain_takeover"
+            in provider.audit_metadata.expected_checks
+            and provider._identity.audited_regions
+        ):
+            self._get_all_region_elastic_ips()
 
-    def __list_hosted_zones__(self):
+    def _list_hosted_zones(self):
         logger.info("Route53 - Listing Hosting Zones...")
         try:
             list_hosted_zones_paginator = self.client.get_paginator("list_hosted_zones")
@@ -46,7 +55,7 @@ class Route53(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_resource_record_sets__(self):
+    def _list_resource_record_sets(self):
         logger.info("Route53 - Listing Hosting Zones...")
         try:
             list_resource_record_sets_paginator = self.client.get_paginator(
@@ -78,7 +87,34 @@ class Route53(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_query_logging_configs__(self):
+    def _get_all_region_elastic_ips(self):
+        """Gather Elastic IPs from all enabled regions since Route53 is a global service.
+
+        When running Prowler with --region, ec2_client.elastic_ips is scoped
+        to the specified region(s). Route53 records can reference EIPs from any
+        region, so we need to query all enabled regions to avoid false positives.
+        """
+        logger.info("Route53 - Gathering Elastic IPs from all regions...")
+        all_regions = (
+            self.provider._enabled_regions
+            if self.provider._enabled_regions is not None
+            else set(self.provider._identity.audited_regions)
+        )
+
+        for region in all_regions:
+            try:
+                regional_ec2_client = self.session.client("ec2", region_name=region)
+                for addr in regional_ec2_client.describe_addresses().get(
+                    "Addresses", []
+                ):
+                    if "PublicIp" in addr:
+                        self.all_account_elastic_ips.append(addr["PublicIp"])
+            except Exception as error:
+                logger.warning(
+                    f"{region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+
+    def _list_query_logging_configs(self):
         logger.info("Route53 - Listing Query Logging Configs...")
         try:
             for hosted_zone in self.hosted_zones.values():
@@ -87,20 +123,21 @@ class Route53(AWSService):
                 )
                 for page in list_query_logging_configs_paginator.paginate():
                     for logging_config in page["QueryLoggingConfigs"]:
-                        self.hosted_zones[hosted_zone.id].logging_config = (
-                            LoggingConfig(
-                                cloudwatch_log_group_arn=logging_config[
-                                    "CloudWatchLogsLogGroupArn"
-                                ]
+                        if logging_config["HostedZoneId"] == hosted_zone.id:
+                            self.hosted_zones[hosted_zone.id].logging_config = (
+                                LoggingConfig(
+                                    cloudwatch_log_group_arn=logging_config[
+                                        "CloudWatchLogsLogGroupArn"
+                                    ]
+                                )
                             )
-                        )
 
         except Exception as error:
             logger.error(
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_tags_for_resource__(self):
+    def _list_tags_for_resource(self):
         logger.info("Route53Domains - List Tags...")
         for hosted_zone in self.hosted_zones.values():
             try:
@@ -137,22 +174,19 @@ class RecordSet(BaseModel):
     region: str
 
 
-################## Route53Domains
 class Route53Domains(AWSService):
     def __init__(self, provider):
-        # Call AWSService's __init__
-        super().__init__(__class__.__name__, provider)
+        # Route53Domains is a global service that supports endpoints in multiple AWS Regions
+        # but you must specify the US East (N. Virginia) Region to create, update, or otherwise work with domains.
+        region = "us-east-1" if provider.identity.partition == "aws" else None
+        super().__init__(__class__.__name__, provider, region=region)
         self.domains = {}
         if self.audited_partition == "aws":
-            # Route53Domains is a global service that supports endpoints in multiple AWS Regions
-            # but you must specify the US East (N. Virginia) Region to create, update, or otherwise work with domains.
-            self.region = "us-east-1"
-            self.client = self.session.client(self.service, self.region)
-            self.__list_domains__()
-            self.__get_domain_detail__()
-            self.__list_tags_for_domain__()
+            self._list_domains()
+            self._get_domain_detail()
+            self._list_tags_for_domain()
 
-    def __list_domains__(self):
+    def _list_domains(self):
         logger.info("Route53Domains - Listing Domains...")
         try:
             list_domains_zones_paginator = self.client.get_paginator("list_domains")
@@ -161,7 +195,9 @@ class Route53Domains(AWSService):
                     domain_name = domain["DomainName"]
 
                     self.domains[domain_name] = Domain(
-                        name=domain_name, region=self.region
+                        name=domain_name,
+                        arn=f"arn:{self.audited_partition}:route53:::domain/{domain_name}",
+                        region=self.region,
                     )
 
         except Exception as error:
@@ -169,7 +205,7 @@ class Route53Domains(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_domain_detail__(self):
+    def _get_domain_detail(self):
         logger.info("Route53Domains - Getting Domain Detail...")
         try:
             for domain in self.domains.values():
@@ -182,7 +218,7 @@ class Route53Domains(AWSService):
                 f"{self.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_tags_for_domain__(self):
+    def _list_tags_for_domain(self):
         logger.info("Route53Domains - List Tags...")
         for domain in self.domains.values():
             try:
@@ -198,6 +234,7 @@ class Route53Domains(AWSService):
 
 class Domain(BaseModel):
     name: str
+    arn: str
     region: str
     admin_privacy: bool = False
     status_list: list[str] = None

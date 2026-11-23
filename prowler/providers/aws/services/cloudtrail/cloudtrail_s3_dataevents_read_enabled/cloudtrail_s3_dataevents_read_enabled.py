@@ -27,16 +27,25 @@ class cloudtrail_s3_dataevents_read_enabled(Check):
                                     or f"arn:{cloudtrail_client.audited_partition}:s3:::*/*"
                                     in resource["Values"]
                                 ):
-                                    report = Check_Report_AWS(self.metadata())
+                                    report = Check_Report_AWS(
+                                        metadata=self.metadata(),
+                                        resource=trail,
+                                    )
                                     report.region = trail.home_region
-                                    report.resource_id = trail.name
-                                    report.resource_arn = trail.arn
-                                    report.resource_tags = trail.tags
                                     report.status = "PASS"
                                     report.status_extended = f"Trail {trail.name} from home region {trail.home_region} has a classic data event selector to record all S3 object-level API operations."
                                     findings.append(report)
                     # advanced event selectors
                     elif data_event.is_advanced:
+                        # Skip selectors whose readOnly field excludes read events
+                        if any(
+                            field_selector["Field"] == "readOnly"
+                            and "true" not in field_selector.get("Equals", ["true"])
+                            for field_selector in data_event.event_selector[
+                                "FieldSelectors"
+                            ]
+                        ):
+                            continue
                         for field_selector in data_event.event_selector[
                             "FieldSelectors"
                         ]:
@@ -44,18 +53,19 @@ class cloudtrail_s3_dataevents_read_enabled(Check):
                                 field_selector["Field"] == "resources.type"
                                 and field_selector["Equals"][0] == "AWS::S3::Object"
                             ):
-                                report = Check_Report_AWS(self.metadata())
+                                report = Check_Report_AWS(
+                                    metadata=self.metadata(), resource=trail
+                                )
                                 report.region = trail.home_region
-                                report.resource_id = trail.name
-                                report.resource_arn = trail.arn
-                                report.resource_tags = trail.tags
                                 report.status = "PASS"
                                 report.status_extended = f"Trail {trail.name} from home region {trail.home_region} has an advanced data event selector to record all S3 object-level API operations."
                                 findings.append(report)
             if not findings and (
                 s3_client.buckets or cloudtrail_client.provider.scan_unused_services
             ):
-                report = Check_Report_AWS(self.metadata())
+                report = Check_Report_AWS(
+                    metadata=self.metadata(), resource=cloudtrail_client.trails
+                )
                 report.region = cloudtrail_client.region
                 report.resource_arn = cloudtrail_client.trail_arn_template
                 report.resource_id = cloudtrail_client.audited_account

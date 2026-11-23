@@ -14,6 +14,7 @@ from prowler.config.config import (
     output_file_timestamp,
 )
 from prowler.lib.logger import logger
+from prowler.lib.outputs.utils import sanitize_csv_value
 from prowler.providers.aws.aws_provider import AwsProvider
 from prowler.providers.aws.lib.arn.models import get_arn_resource_type
 
@@ -30,10 +31,12 @@ def quick_inventory(provider: AwsProvider, args):
             ec2_client = provider.session.current_session.client(
                 "ec2", region_name=provider.identity.profile_region
             )
+            excluded_regions = getattr(provider, "_excluded_regions", set())
             # Get all the available regions
             provider.identity.audited_regions = [
                 region["RegionName"]
                 for region in ec2_client.describe_regions()["Regions"]
+                if region["RegionName"] not in excluded_regions
             ]
 
         with alive_bar(
@@ -54,9 +57,7 @@ def quick_inventory(provider: AwsProvider, args):
                 try:
                     # Scan IAM only once
                     if not iam_was_scanned:
-                        global_resources.extend(
-                            get_iam_resources(provider.session.current_session)
-                        )
+                        global_resources.extend(get_iam_resources(provider))
                         iam_was_scanned = True
 
                     # Get regional S3 buckets since none-tagged buckets are not supported by the resourcegroupstaggingapi
@@ -267,6 +268,9 @@ def create_output(resources: list, provider: AwsProvider, args):
                 resource["AWS_ResourceID"] = "/".join(
                     item["arn"].split(":")[-1].split("/")[1:]
                 )
+            # Cover SNS case
+            if resource["AWS_Service"] == "sns":
+                resource["AWS_ResourceID"] = item["arn"].split(":")[-1]
             resource["AWS_Tags"] = item["tags"]
             json_output.append(resource)
 
@@ -290,11 +294,11 @@ def create_output(resources: list, provider: AwsProvider, args):
                 header = data.keys()
                 csv_writer.writerow(header)
                 count += 1
-            csv_writer.writerow(data.values())
+            csv_writer.writerow([sanitize_csv_value(v) for v in data.values()])
 
         csv_file.close()
         print(
-            f"\n{Fore.YELLOW}WARNING: Only resources that have or have had tags will appear (except for IAM and S3).\nSee more in https://docs.prowler.cloud/en/latest/tutorials/quick-inventory/#objections{Style.RESET_ALL}"
+            f"\n{Fore.YELLOW}WARNING: Only resources that have or have had tags will appear (except for IAM and S3).\nSee more in https://docs.prowler.com/user-guide/cli/tutorials/quick-inventory/#objections{Style.RESET_ALL}"
         )
         print("\nMore details in files:")
         print(f" - CSV: {args.output_directory}/{output_file + csv_file_suffix}")
@@ -307,8 +311,8 @@ def create_output(resources: list, provider: AwsProvider, args):
             if args.output_bucket:
                 output_bucket = args.output_bucket
                 bucket_session = provider.session.current_session
-            # Check if -D was input
-            elif args.output_bucket_no_assume:
+            # The outer condition guarantees -D was input when -B was not
+            else:
                 output_bucket = args.output_bucket_no_assume
                 bucket_session = provider.session.original_session
 
@@ -370,9 +374,9 @@ def get_regional_buckets(provider: AwsProvider, region: str) -> list:
     return regional_buckets
 
 
-def get_iam_resources(session) -> list:
+def get_iam_resources(provider: AwsProvider) -> list:
     iam_resources = []
-    iam_client = session.client("iam")
+    iam_client = provider.session.current_session.client("iam")
     try:
         get_roles_paginator = iam_client.get_paginator("list_roles")
         for page in get_roles_paginator.paginate():

@@ -14,12 +14,15 @@ class Test_shield_advanced_protection_in_global_accelerators:
         shield_client.enabled = False
         # GlobalAccelerator Client
         globalaccelerator_client = mock.MagicMock
-        with mock.patch(
-            "prowler.providers.aws.services.shield.shield_service.Shield",
-            new=shield_client,
-        ), mock.patch(
-            "prowler.providers.aws.services.globalaccelerator.globalaccelerator_service.GlobalAccelerator",
-            new=globalaccelerator_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.shield.shield_service.Shield",
+                new=shield_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.globalaccelerator.globalaccelerator_service.GlobalAccelerator",
+                new=globalaccelerator_client,
+            ),
         ):
             # Test Check
             from prowler.providers.aws.services.shield.shield_advanced_protection_in_global_accelerators.shield_advanced_protection_in_global_accelerators import (
@@ -43,6 +46,7 @@ class Test_shield_advanced_protection_in_global_accelerators:
                 name=accelerator_name,
                 region=AWS_REGION_EU_WEST_1,
                 enabled=True,
+                tags=[{"Key": "Name", "Value": "TestAccelerator"}],
             )
         }
 
@@ -61,12 +65,15 @@ class Test_shield_advanced_protection_in_global_accelerators:
             )
         }
 
-        with mock.patch(
-            "prowler.providers.aws.services.shield.shield_service.Shield",
-            new=shield_client,
-        ), mock.patch(
-            "prowler.providers.aws.services.globalaccelerator.globalaccelerator_service.GlobalAccelerator",
-            new=globalaccelerator_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.shield.shield_service.Shield",
+                new=shield_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.globalaccelerator.globalaccelerator_service.GlobalAccelerator",
+                new=globalaccelerator_client,
+            ),
         ):
             # Test Check
             from prowler.providers.aws.services.shield.shield_advanced_protection_in_global_accelerators.shield_advanced_protection_in_global_accelerators import (
@@ -85,6 +92,9 @@ class Test_shield_advanced_protection_in_global_accelerators:
                 result[0].status_extended
                 == f"Global Accelerator {accelerator_id} is protected by AWS Shield Advanced."
             )
+            assert result[0].resource_tags == [
+                {"Key": "Name", "Value": "TestAccelerator"}
+            ]
 
     def test_shield_enabled_globalaccelerator_not_protected(self):
         # GlobalAccelerator Client
@@ -98,6 +108,7 @@ class Test_shield_advanced_protection_in_global_accelerators:
                 name=accelerator_name,
                 region=AWS_REGION_EU_WEST_1,
                 enabled=True,
+                tags=[{"Key": "Name", "Value": "TestAccelerator"}],
             )
         }
 
@@ -107,12 +118,15 @@ class Test_shield_advanced_protection_in_global_accelerators:
         shield_client.region = AWS_REGION_EU_WEST_1
         shield_client.protections = {}
 
-        with mock.patch(
-            "prowler.providers.aws.services.shield.shield_service.Shield",
-            new=shield_client,
-        ), mock.patch(
-            "prowler.providers.aws.services.globalaccelerator.globalaccelerator_service.GlobalAccelerator",
-            new=globalaccelerator_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.shield.shield_service.Shield",
+                new=shield_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.globalaccelerator.globalaccelerator_service.GlobalAccelerator",
+                new=globalaccelerator_client,
+            ),
         ):
             # Test Check
             from prowler.providers.aws.services.shield.shield_advanced_protection_in_global_accelerators.shield_advanced_protection_in_global_accelerators import (
@@ -131,6 +145,9 @@ class Test_shield_advanced_protection_in_global_accelerators:
                 result[0].status_extended
                 == f"Global Accelerator {accelerator_id} is not protected by AWS Shield Advanced."
             )
+            assert result[0].resource_tags == [
+                {"Key": "Name", "Value": "TestAccelerator"}
+            ]
 
     def test_shield_disabled_globalaccelerator_not_protected(self):
         # GlobalAccelerator Client
@@ -153,12 +170,15 @@ class Test_shield_advanced_protection_in_global_accelerators:
         shield_client.region = AWS_REGION_EU_WEST_1
         shield_client.protections = {}
 
-        with mock.patch(
-            "prowler.providers.aws.services.shield.shield_service.Shield",
-            new=shield_client,
-        ), mock.patch(
-            "prowler.providers.aws.services.globalaccelerator.globalaccelerator_service.GlobalAccelerator",
-            new=globalaccelerator_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.shield.shield_service.Shield",
+                new=shield_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.globalaccelerator.globalaccelerator_service.GlobalAccelerator",
+                new=globalaccelerator_client,
+            ),
         ):
             # Test Check
             from prowler.providers.aws.services.shield.shield_advanced_protection_in_global_accelerators.shield_advanced_protection_in_global_accelerators import (

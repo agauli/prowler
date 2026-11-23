@@ -1,5 +1,8 @@
+from typing import Any, Dict
 from unittest import mock
 from uuid import uuid4
+
+import pytest
 
 from prowler.providers.aws.services.sns.sns_service import Topic
 from tests.providers.aws.utils import AWS_ACCOUNT_NUMBER, AWS_REGION_EU_WEST_1
@@ -96,6 +99,89 @@ test_policy_restricted_principal_account_organization = {
     ]
 }
 
+test_policy_restricted_source_arn = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {"AWS": "*"},
+            "Action": "SNS:Publish",
+            "Resource": f"arn:aws:sns:{AWS_REGION_EU_WEST_1}:{AWS_ACCOUNT_NUMBER}:{topic_name}",
+            "Condition": {
+                "ArnLike": {"aws:SourceArn": "arn:aws:s3:::test-bucket-name"}
+            },
+        }
+    ],
+}
+
+test_policy_invalid_source_arn = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {"AWS": "*"},
+            "Action": "SNS:Publish",
+            "Resource": f"arn:aws:sns:{AWS_REGION_EU_WEST_1}:{AWS_ACCOUNT_NUMBER}:{topic_name}",
+            "Condition": {"ArnLike": {"aws:SourceArn": "invalid-arn-format"}},
+        }
+    ],
+}
+
+test_policy_unrestricted_source_arn_wildcard = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {"AWS": "*"},
+            "Action": "SNS:Publish",
+            "Resource": f"arn:aws:sns:{AWS_REGION_EU_WEST_1}:{AWS_ACCOUNT_NUMBER}:{topic_name}",
+            "Condition": {"ArnLike": {"aws:SourceArn": "*"}},
+        }
+    ],
+}
+
+test_policy_unrestricted_source_arn_service_wildcard = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {"AWS": "*"},
+            "Action": "SNS:Publish",
+            "Resource": f"arn:aws:sns:{AWS_REGION_EU_WEST_1}:{AWS_ACCOUNT_NUMBER}:{topic_name}",
+            "Condition": {"ArnLike": {"aws:SourceArn": "arn:aws:s3:::*"}},
+        }
+    ],
+}
+
+test_policy_unrestricted_source_arn_multi_wildcard = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {"AWS": "*"},
+            "Action": "SNS:Publish",
+            "Resource": f"arn:aws:sns:{AWS_REGION_EU_WEST_1}:{AWS_ACCOUNT_NUMBER}:{topic_name}",
+            "Condition": {"ArnLike": {"aws:SourceArn": "arn:aws:*:*:*:*"}},
+        }
+    ],
+}
+
+
+def generate_policy_restricted_on_sns_endpoint(
+    endpoint: str | list[str], condition_operator: str = "StringEquals"
+) -> Dict[str, Any]:
+    return {
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {"AWS": "*"},
+                "Action": ["sns:Subscribe"],
+                "Resource": f"arn:aws:sns:{AWS_REGION_EU_WEST_1}:{AWS_ACCOUNT_NUMBER}:{topic_name}",
+                "Condition": {condition_operator: {"SNS:Endpoint": endpoint}},
+            }
+        ]
+    }
+
 
 class Test_sns_topics_not_publicly_accessible:
     def test_no_topics(self):
@@ -139,7 +225,7 @@ class Test_sns_topics_not_publicly_accessible:
             assert result[0].status == "PASS"
             assert (
                 result[0].status_extended
-                == f"SNS topic {topic_name} is not publicly accesible."
+                == f"SNS topic {topic_name} is not publicly accessible."
             )
             assert result[0].resource_id == topic_name
             assert result[0].resource_arn == topic_arn
@@ -167,7 +253,7 @@ class Test_sns_topics_not_publicly_accessible:
             assert result[0].status == "PASS"
             assert (
                 result[0].status_extended
-                == f"SNS topic {topic_name} is not publicly accesible."
+                == f"SNS topic {topic_name} is not publicly accessible."
             )
             assert result[0].resource_id == topic_name
             assert result[0].resource_arn == topic_arn
@@ -374,6 +460,354 @@ class Test_sns_topics_not_publicly_accessible:
             assert (
                 result[0].status_extended
                 == f"SNS topic {topic_name} is not public because its policy only allows access from the account {AWS_ACCOUNT_NUMBER} and an organization."
+            )
+            assert result[0].resource_id == topic_name
+            assert result[0].resource_arn == topic_arn
+            assert result[0].region == AWS_REGION_EU_WEST_1
+            assert result[0].resource_tags == []
+
+    def test_topic_public_with_source_arn_restriction(self):
+        sns_client = mock.MagicMock
+        sns_client.audited_account = AWS_ACCOUNT_NUMBER
+        sns_client.topics = []
+        sns_client.topics.append(
+            Topic(
+                arn=topic_arn,
+                name=topic_name,
+                policy=test_policy_restricted_source_arn,
+                region=AWS_REGION_EU_WEST_1,
+            )
+        )
+        sns_client.provider = mock.MagicMock()
+        sns_client.provider.organizations_metadata = mock.MagicMock()
+        sns_client.provider.organizations_metadata.organization_id = org_id
+        with mock.patch(
+            "prowler.providers.aws.services.sns.sns_service.SNS",
+            sns_client,
+        ):
+            from prowler.providers.aws.services.sns.sns_topics_not_publicly_accessible.sns_topics_not_publicly_accessible import (
+                sns_topics_not_publicly_accessible,
+            )
+
+            check = sns_topics_not_publicly_accessible()
+            result = check.execute()
+            assert len(result) == 1
+            assert result[0].status == "PASS"
+            assert (
+                result[0].status_extended
+                == f"SNS topic {topic_name} is not publicly accessible."
+            )
+            assert result[0].resource_id == topic_name
+            assert result[0].resource_arn == topic_arn
+            assert result[0].region == AWS_REGION_EU_WEST_1
+            assert result[0].resource_tags == []
+
+    @pytest.mark.parametrize(
+        "first_policy,second_policy,expected_status,expected_status_extended",
+        [
+            pytest.param(
+                test_policy_restricted_source_arn,
+                test_policy_not_restricted,
+                "FAIL",
+                "is public because its policy allows public access.",
+                id="restricted-first",
+            ),
+            pytest.param(
+                test_policy_not_restricted,
+                test_policy_restricted_source_arn,
+                "FAIL",
+                "is public because its policy allows public access.",
+                id="public-first",
+            ),
+            pytest.param(
+                test_policy_restricted_source_arn,
+                generate_policy_restricted_on_sns_endpoint(
+                    ["a@example.com", "b@example.com"], condition_operator="StringLike"
+                ),
+                "PASS",
+                "is not public because its policy only allows access from an endpoint.",
+                id="restricted-endpoint-list",
+            ),
+        ],
+    )
+    def test_topic_with_mixed_policy_statements(
+        self, first_policy, second_policy, expected_status, expected_status_extended
+    ):
+        policy = {
+            "Version": "2012-10-17",
+            "Statement": first_policy["Statement"] + second_policy["Statement"],
+        }
+        sns_client = mock.MagicMock(
+            audited_account=AWS_ACCOUNT_NUMBER,
+            topics=[
+                Topic(
+                    arn=topic_arn,
+                    name=topic_name,
+                    policy=policy,
+                    region=AWS_REGION_EU_WEST_1,
+                )
+            ],
+        )
+
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=None,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.sns.sns_service.SNS",
+                new=mock.MagicMock,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.sns.sns_topics_not_publicly_accessible.sns_topics_not_publicly_accessible.sns_client",
+                new=sns_client,
+            ),
+        ):
+            from prowler.providers.aws.services.sns.sns_topics_not_publicly_accessible.sns_topics_not_publicly_accessible import (
+                sns_topics_not_publicly_accessible,
+            )
+
+            result = sns_topics_not_publicly_accessible().execute()
+
+        assert len(result) == 1
+        assert result[0].status == expected_status
+        assert (
+            result[0].status_extended
+            == f"SNS topic {topic_name} {expected_status_extended}"
+        )
+        assert result[0].resource_id == topic_name
+        assert result[0].resource_arn == topic_arn
+        assert result[0].region == AWS_REGION_EU_WEST_1
+
+    def test_topic_public_with_invalid_source_arn(self):
+        sns_client = mock.MagicMock
+        sns_client.audited_account = AWS_ACCOUNT_NUMBER
+        sns_client.topics = []
+        sns_client.topics.append(
+            Topic(
+                arn=topic_arn,
+                name=topic_name,
+                policy=test_policy_invalid_source_arn,
+                region=AWS_REGION_EU_WEST_1,
+            )
+        )
+        sns_client.provider = mock.MagicMock()
+        sns_client.provider.organizations_metadata = mock.MagicMock()
+        sns_client.provider.organizations_metadata.organization_id = org_id
+        with mock.patch(
+            "prowler.providers.aws.services.sns.sns_service.SNS",
+            sns_client,
+        ):
+            from prowler.providers.aws.services.sns.sns_topics_not_publicly_accessible.sns_topics_not_publicly_accessible import (
+                sns_topics_not_publicly_accessible,
+            )
+
+            check = sns_topics_not_publicly_accessible()
+            result = check.execute()
+            assert len(result) == 1
+            assert result[0].status == "PASS"
+            assert (
+                result[0].status_extended
+                == f"SNS topic {topic_name} is not publicly accessible."
+            )
+            assert result[0].resource_id == topic_name
+            assert result[0].resource_arn == topic_arn
+            assert result[0].region == AWS_REGION_EU_WEST_1
+            assert result[0].resource_tags == []
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            ("*@example.com"),
+            ("user@example.com"),
+            ("https://events.pagerduty.com/integration/987654321/enqueue"),
+            (
+                "arn:aws:sns:eu-west-2:123456789012:example-topic:995be20c-a7e3-44ca-8c18-77cb263d15e7"
+            ),
+        ],
+    )
+    def test_topic_public_with_sns_endpoint(self, endpoint: str):
+        sns_client = mock.MagicMock
+        sns_client.audited_account = AWS_ACCOUNT_NUMBER
+        sns_client.topics = []
+        sns_client.topics.append(
+            Topic(
+                arn=topic_arn,
+                name=topic_name,
+                policy=generate_policy_restricted_on_sns_endpoint(endpoint=endpoint),
+                region=AWS_REGION_EU_WEST_1,
+            )
+        )
+        sns_client.provider = mock.MagicMock()
+        sns_client.provider.organizations_metadata = mock.MagicMock()
+        sns_client.provider.organizations_metadata.organization_id = org_id
+        with mock.patch(
+            "prowler.providers.aws.services.sns.sns_service.SNS",
+            sns_client,
+        ):
+            from prowler.providers.aws.services.sns.sns_topics_not_publicly_accessible.sns_topics_not_publicly_accessible import (
+                sns_topics_not_publicly_accessible,
+            )
+
+            check = sns_topics_not_publicly_accessible()
+            result = check.execute()
+            assert len(result) == 1
+            assert result[0].status == "PASS"
+            assert (
+                result[0].status_extended
+                == f"SNS topic {topic_name} is not public because its policy only allows access from an endpoint."
+            )
+            assert result[0].resource_id == topic_name
+            assert result[0].resource_arn == topic_arn
+            assert result[0].region == AWS_REGION_EU_WEST_1
+            assert result[0].resource_tags == []
+
+    def test_topic_public_with_unrestricted_source_arn_wildcard(self):
+        sns_client = mock.MagicMock
+        sns_client.audited_account = AWS_ACCOUNT_NUMBER
+        sns_client.topics = []
+        sns_client.topics.append(
+            Topic(
+                arn=topic_arn,
+                name=topic_name,
+                policy=test_policy_unrestricted_source_arn_wildcard,
+                region=AWS_REGION_EU_WEST_1,
+            )
+        )
+        sns_client.provider = mock.MagicMock()
+        sns_client.provider.organizations_metadata = mock.MagicMock()
+        sns_client.provider.organizations_metadata.organization_id = org_id
+        with mock.patch(
+            "prowler.providers.aws.services.sns.sns_service.SNS",
+            sns_client,
+        ):
+            from prowler.providers.aws.services.sns.sns_topics_not_publicly_accessible.sns_topics_not_publicly_accessible import (
+                sns_topics_not_publicly_accessible,
+            )
+
+            check = sns_topics_not_publicly_accessible()
+            result = check.execute()
+            assert len(result) == 1
+            assert result[0].status == "FAIL"
+            assert (
+                result[0].status_extended
+                == f"SNS topic {topic_name} is public because its policy allows public access."
+            )
+            assert result[0].resource_id == topic_name
+            assert result[0].resource_arn == topic_arn
+            assert result[0].region == AWS_REGION_EU_WEST_1
+            assert result[0].resource_tags == []
+
+    def test_topic_public_with_unrestricted_source_arn_service_wildcard(self):
+        sns_client = mock.MagicMock
+        sns_client.audited_account = AWS_ACCOUNT_NUMBER
+        sns_client.topics = []
+        sns_client.topics.append(
+            Topic(
+                arn=topic_arn,
+                name=topic_name,
+                policy=test_policy_unrestricted_source_arn_service_wildcard,
+                region=AWS_REGION_EU_WEST_1,
+            )
+        )
+        sns_client.provider = mock.MagicMock()
+        sns_client.provider.organizations_metadata = mock.MagicMock()
+        sns_client.provider.organizations_metadata.organization_id = org_id
+        with mock.patch(
+            "prowler.providers.aws.services.sns.sns_service.SNS",
+            sns_client,
+        ):
+            from prowler.providers.aws.services.sns.sns_topics_not_publicly_accessible.sns_topics_not_publicly_accessible import (
+                sns_topics_not_publicly_accessible,
+            )
+
+            check = sns_topics_not_publicly_accessible()
+            result = check.execute()
+            assert len(result) == 1
+            assert result[0].status == "FAIL"
+            assert (
+                result[0].status_extended
+                == f"SNS topic {topic_name} is public because its policy allows public access."
+            )
+            assert result[0].resource_id == topic_name
+            assert result[0].resource_arn == topic_arn
+            assert result[0].region == AWS_REGION_EU_WEST_1
+            assert result[0].resource_tags == []
+
+    def test_topic_public_with_unrestricted_source_arn_multi_wildcard(self):
+        sns_client = mock.MagicMock
+        sns_client.audited_account = AWS_ACCOUNT_NUMBER
+        sns_client.topics = []
+        sns_client.topics.append(
+            Topic(
+                arn=topic_arn,
+                name=topic_name,
+                policy=test_policy_unrestricted_source_arn_multi_wildcard,
+                region=AWS_REGION_EU_WEST_1,
+            )
+        )
+        sns_client.provider = mock.MagicMock()
+        sns_client.provider.organizations_metadata = mock.MagicMock()
+        sns_client.provider.organizations_metadata.organization_id = org_id
+        with mock.patch(
+            "prowler.providers.aws.services.sns.sns_service.SNS",
+            sns_client,
+        ):
+            from prowler.providers.aws.services.sns.sns_topics_not_publicly_accessible.sns_topics_not_publicly_accessible import (
+                sns_topics_not_publicly_accessible,
+            )
+
+            check = sns_topics_not_publicly_accessible()
+            result = check.execute()
+            assert len(result) == 1
+            assert result[0].status == "FAIL"
+            assert (
+                result[0].status_extended
+                == f"SNS topic {topic_name} is public because its policy allows public access."
+            )
+            assert result[0].resource_id == topic_name
+            assert result[0].resource_arn == topic_arn
+            assert result[0].region == AWS_REGION_EU_WEST_1
+            assert result[0].resource_tags == []
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            ("*@*"),
+            ("https://events.pagerduty.com/integration/*/enqueue"),
+            ("arn:aws:sns:eu-west-2:*:example-topic:*"),
+        ],
+    )
+    def test_topic_public_with_unrestricted_sns_endpoint(self, endpoint: str):
+        sns_client = mock.MagicMock
+        sns_client.audited_account = AWS_ACCOUNT_NUMBER
+        sns_client.topics = []
+        sns_client.topics.append(
+            Topic(
+                arn=topic_arn,
+                name=topic_name,
+                policy=generate_policy_restricted_on_sns_endpoint(endpoint=endpoint),
+                region=AWS_REGION_EU_WEST_1,
+            )
+        )
+        sns_client.provider = mock.MagicMock()
+        sns_client.provider.organizations_metadata = mock.MagicMock()
+        sns_client.provider.organizations_metadata.organization_id = org_id
+        with mock.patch(
+            "prowler.providers.aws.services.sns.sns_service.SNS",
+            sns_client,
+        ):
+            from prowler.providers.aws.services.sns.sns_topics_not_publicly_accessible.sns_topics_not_publicly_accessible import (
+                sns_topics_not_publicly_accessible,
+            )
+
+            check = sns_topics_not_publicly_accessible()
+            result = check.execute()
+            assert len(result) == 1
+            assert result[0].status == "FAIL"
+            assert (
+                result[0].status_extended
+                == f"SNS topic {topic_name} is public because its policy allows public access."
             )
             assert result[0].resource_id == topic_name
             assert result[0].resource_arn == topic_arn

@@ -1,53 +1,71 @@
 import json
-import os
-import tempfile
-
-from detect_secrets import SecretsCollection
-from detect_secrets.settings import default_settings
 
 from prowler.lib.check.models import Check, Check_Report_AWS
+from prowler.lib.utils.utils import (
+    SecretsScanError,
+    annotate_verified_secrets,
+    detect_secrets_scan_batch,
+)
 from prowler.providers.aws.services.ssm.ssm_client import ssm_client
 
 
 class ssm_document_secrets(Check):
     def execute(self):
         findings = []
-        for document in ssm_client.documents.values():
-            report = Check_Report_AWS(self.metadata())
-            report.region = document.region
-            report.resource_arn = document.arn
-            report.resource_id = document.name
-            report.resource_tags = document.tags
+        secrets_ignore_patterns = ssm_client.audit_config.get(
+            "secrets_ignore_patterns", []
+        )
+        validate = ssm_client.audit_config.get("secrets_validate", False)
+
+        confidence = ssm_client.audit_config.get("secrets_confidence", "low")
+        documents = list(ssm_client.documents.values())
+
+        # Collect one payload per document (its content) and scan them all in
+        # batched Kingfisher invocations instead of one subprocess per document.
+        def payloads():
+            for index, document in enumerate(documents):
+                if document.content:
+                    yield index, json.dumps(document.content, indent=2)
+
+        scan_error = None
+        try:
+            batch_results = detect_secrets_scan_batch(
+                payloads(),
+                excluded_secrets=secrets_ignore_patterns,
+                validate=validate,
+                confidence=confidence,
+            )
+        except SecretsScanError as error:
+            batch_results = {}
+            scan_error = error
+
+        for index, document in enumerate(documents):
+            report = Check_Report_AWS(metadata=self.metadata(), resource=document)
             report.status = "PASS"
             report.status_extended = (
                 f"No secrets found in SSM Document {document.name}."
             )
 
             if document.content:
-                temp_env_data_file = tempfile.NamedTemporaryFile(delete=False)
-                temp_env_data_file.write(
-                    bytes(
-                        json.dumps(document.content, indent=2),
-                        encoding="raw_unicode_escape",
+                if scan_error:
+                    report.status = "MANUAL"
+                    report.status_extended = (
+                        f"Could not scan SSM Document {document.name} for secrets: "
+                        f"{scan_error}; manual review is required."
                     )
-                )
-                temp_env_data_file.close()
-                secrets = SecretsCollection()
-                with default_settings():
-                    secrets.scan_file(temp_env_data_file.name)
-
-                detect_secrets_output = secrets.json()
+                    findings.append(report)
+                    continue
+                detect_secrets_output = batch_results.get(index)
                 if detect_secrets_output:
                     secrets_string = ", ".join(
                         [
                             f"{secret['type']} on line {secret['line_number']}"
-                            for secret in detect_secrets_output[temp_env_data_file.name]
+                            for secret in detect_secrets_output
                         ]
                     )
                     report.status = "FAIL"
                     report.status_extended = f"Potential secret found in SSM Document {document.name} -> {secrets_string}."
-
-                os.remove(temp_env_data_file.name)
+                    annotate_verified_secrets(report, detect_secrets_output)
 
             findings.append(report)
 

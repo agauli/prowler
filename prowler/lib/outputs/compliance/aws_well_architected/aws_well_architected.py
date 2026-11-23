@@ -1,4 +1,9 @@
-from prowler.lib.check.compliance_models import ComplianceBaseModel
+from prowler.config.config import timestamp
+from prowler.lib.check.compliance_config_eval import (
+    apply_config_status,
+    build_requirement_config_status,
+)
+from prowler.lib.check.compliance_models import Compliance
 from prowler.lib.outputs.compliance.aws_well_architected.models import (
     AWSWellArchitectedModel,
 )
@@ -21,7 +26,7 @@ class AWSWellArchitected(ComplianceOutput):
     def transform(
         self,
         findings: list[Finding],
-        compliance: ComplianceBaseModel,
+        compliance: Compliance,
         compliance_name: str,
     ) -> None:
         """
@@ -29,24 +34,31 @@ class AWSWellArchitected(ComplianceOutput):
 
         Parameters:
             - findings (list): A list of findings.
-            - compliance (ComplianceBaseModel): A compliance model.
+            - compliance (Compliance): A compliance model.
             - compliance_name (str): The name of the compliance model.
 
         Returns:
             - None
         """
+        requirement_config_status = build_requirement_config_status(
+            compliance.Requirements
+        )
         for finding in findings:
-            # Get the compliance requirements for the finding
-            finding_requirements = finding.compliance.get(compliance_name, [])
             for requirement in compliance.Requirements:
-                if requirement.Id in finding_requirements:
+                # Source of truth: framework JSON, not finding.compliance snapshot (avoids CSV/UI count drift).
+                if finding.check_id in requirement.Checks:
+                    row_status, row_status_extended = apply_config_status(
+                        finding.status,
+                        finding.status_extended,
+                        requirement_config_status.get(requirement.Id),
+                    )
                     for attribute in requirement.Attributes:
                         compliance_row = AWSWellArchitectedModel(
                             Provider=finding.provider,
                             Description=compliance.Description,
                             AccountId=finding.account_uid,
                             Region=finding.region,
-                            AssessmentDate=str(finding.timestamp),
+                            AssessmentDate=str(timestamp),
                             Requirements_Id=requirement.Id,
                             Requirements_Description=requirement.Description,
                             Requirements_Attributes_Name=attribute.Name,
@@ -58,12 +70,14 @@ class AWSWellArchitected(ComplianceOutput):
                             Requirements_Attributes_AssessmentMethod=attribute.AssessmentMethod,
                             Requirements_Attributes_Description=attribute.Description,
                             Requirements_Attributes_ImplementationGuidanceUrl=attribute.ImplementationGuidanceUrl,
-                            Status=finding.status,
-                            StatusExtended=finding.status_extended,
+                            Status=row_status,
+                            StatusExtended=row_status_extended,
                             ResourceId=finding.resource_uid,
                             ResourceName=finding.resource_name,
                             CheckId=finding.check_id,
                             Muted=finding.muted,
+                            Framework=compliance.Framework,
+                            Name=compliance.Name,
                         )
                         self._data.append(compliance_row)
         # Add manual requirements to the compliance output
@@ -75,7 +89,7 @@ class AWSWellArchitected(ComplianceOutput):
                         Description=compliance.Description,
                         AccountId="",
                         Region="",
-                        AssessmentDate=str(finding.timestamp),
+                        AssessmentDate=str(timestamp),
                         Requirements_Id=requirement.Id,
                         Requirements_Description=requirement.Description,
                         Requirements_Attributes_Name=attribute.Name,
@@ -93,5 +107,7 @@ class AWSWellArchitected(ComplianceOutput):
                         ResourceName="Manual check",
                         CheckId="manual",
                         Muted=False,
+                        Framework=compliance.Framework,
+                        Name=compliance.Name,
                     )
                     self._data.append(compliance_row)

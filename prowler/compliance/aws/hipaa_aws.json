@@ -1,5 +1,6 @@
 {
   "Framework": "HIPAA",
+  "Name": "HIPAA compliance framework",
   "Version": "",
   "Provider": "AWS",
   "Description": "The Health Insurance Portability and Accountability Act of 1996 (HIPAA) is legislation that helps US workers to retain health insurance coverage when they change or lose jobs. The legislation also seeks to encourage electronic health records to improve the efficiency and quality of the US healthcare system through improved information sharing.",
@@ -18,6 +19,20 @@
       "Checks": [
         "config_recorder_all_regions_enabled",
         "guardduty_is_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "config_recorder_all_regions_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -55,7 +70,6 @@
         "rds_instance_backup_enabled",
         "rds_instance_storage_encrypted",
         "rds_instance_multi_az",
-        "rds_instance_storage_encrypted",
         "rds_snapshots_public_access",
         "redshift_cluster_audit_logging",
         "redshift_cluster_public_access",
@@ -70,7 +84,7 @@
         "sns_topics_kms_encryption_at_rest_enabled",
         "ec2_networkacl_allow_ingress_any_port",
         "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22",
-        "ec2_networkacl_allow_ingress_any_port"
+        "ec2_confidential_workload_host_public_ip"
       ]
     },
     {
@@ -86,10 +100,10 @@
       ],
       "Checks": [
         "apigateway_restapi_logging_enabled",
+        "cloudtrail_bedrock_logging_enabled",
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudtrail_cloudwatch_logging_enabled",
         "cloudtrail_kms_encryption_enabled",
         "cloudtrail_log_file_validation_enabled",
@@ -99,7 +113,22 @@
         "redshift_cluster_audit_logging",
         "s3_bucket_server_access_logging_enabled",
         "securityhub_enabled",
-        "vpc_flow_logs_enabled"
+        "vpc_flow_logs_enabled",
+        "kms_key_enclave_debug_attestation_detected"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -147,18 +176,30 @@
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "elbv2_logging_enabled",
         "elb_logging_enabled",
         "guardduty_is_enabled",
         "iam_root_hardware_mfa_enabled",
         "iam_root_mfa_enabled",
         "iam_user_mfa_enabled_console_access",
-        "iam_user_mfa_enabled_console_access",
         "redshift_cluster_audit_logging",
         "s3_bucket_server_access_logging_enabled",
         "securityhub_enabled",
         "vpc_flow_logs_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -230,8 +271,6 @@
         "cloudtrail_kms_encryption_enabled",
         "dynamodb_accelerator_cluster_encryption_enabled",
         "dynamodb_tables_kms_cmk_encryption_enabled",
-        "dynamodb_tables_kms_cmk_encryption_enabled",
-        "ec2_ebs_volume_encryption",
         "ec2_ebs_volume_encryption",
         "ec2_ebs_default_encryption",
         "efs_encryption_at_rest_enabled",
@@ -243,10 +282,8 @@
         "rds_instance_storage_encrypted",
         "rds_instance_backup_enabled",
         "rds_instance_integration_cloudwatch_logs",
-        "rds_instance_storage_encrypted",
         "redshift_cluster_automated_snapshot",
         "redshift_cluster_audit_logging",
-        "s3_bucket_default_encryption",
         "s3_bucket_default_encryption",
         "sagemaker_notebook_instance_encryption_enabled",
         "sns_topics_kms_encryption_at_rest_enabled"
@@ -264,6 +301,8 @@
         }
       ],
       "Checks": [
+        "iam_inline_policy_no_wildcard_marketplace_subscribe",
+        "iam_policy_no_wildcard_marketplace_subscribe",
         "iam_aws_attached_policy_no_administrative_privileges",
         "iam_customer_attached_policy_no_administrative_privileges",
         "iam_inline_policy_no_administrative_privileges"
@@ -305,7 +344,6 @@
       ],
       "Checks": [
         "ec2_instance_managed_by_ssm",
-        "ssm_managed_compliant_patching",
         "ssm_managed_compliant_patching"
       ]
     },
@@ -324,6 +362,20 @@
         "guardduty_is_enabled",
         "cloudwatch_log_metric_filter_authentication_failures",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -369,6 +421,20 @@
         "cloudwatch_log_metric_filter_authentication_failures",
         "cloudwatch_log_metric_filter_root_usage",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -387,7 +453,6 @@
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudtrail_cloudwatch_logging_enabled",
         "elbv2_logging_enabled",
         "elb_logging_enabled",
@@ -398,6 +463,20 @@
         "s3_bucket_server_access_logging_enabled",
         "securityhub_enabled",
         "vpc_flow_logs_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -413,13 +492,9 @@
       ],
       "Checks": [
         "dynamodb_tables_pitr_enabled",
-        "dynamodb_tables_pitr_enabled",
         "efs_have_backup_enabled",
-        "efs_have_backup_enabled",
-        "rds_instance_backup_enabled",
         "rds_instance_backup_enabled",
         "rds_instance_multi_az",
-        "rds_instance_backup_enabled",
         "redshift_cluster_automated_snapshot",
         "s3_bucket_object_versioning"
       ]
@@ -437,13 +512,9 @@
       ],
       "Checks": [
         "dynamodb_tables_pitr_enabled",
-        "dynamodb_tables_pitr_enabled",
         "efs_have_backup_enabled",
-        "efs_have_backup_enabled",
-        "rds_instance_backup_enabled",
         "rds_instance_backup_enabled",
         "rds_instance_multi_az",
-        "rds_instance_backup_enabled",
         "redshift_cluster_automated_snapshot",
         "s3_bucket_object_versioning"
       ]
@@ -461,13 +532,9 @@
       ],
       "Checks": [
         "dynamodb_tables_pitr_enabled",
-        "dynamodb_tables_pitr_enabled",
         "efs_have_backup_enabled",
-        "efs_have_backup_enabled",
-        "rds_instance_backup_enabled",
         "rds_instance_backup_enabled",
         "rds_instance_multi_az",
-        "rds_instance_backup_enabled",
         "redshift_cluster_automated_snapshot",
         "s3_bucket_object_versioning"
       ]
@@ -485,13 +552,9 @@
       ],
       "Checks": [
         "dynamodb_tables_pitr_enabled",
-        "dynamodb_tables_pitr_enabled",
         "efs_have_backup_enabled",
-        "efs_have_backup_enabled",
-        "rds_instance_backup_enabled",
         "rds_instance_backup_enabled",
         "rds_instance_multi_az",
-        "rds_instance_backup_enabled",
         "redshift_cluster_automated_snapshot",
         "s3_bucket_object_versioning"
       ]
@@ -510,6 +573,20 @@
       "Checks": [
         "guardduty_is_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -538,8 +615,10 @@
         "redshift_cluster_public_access",
         "s3_bucket_public_access",
         "s3_bucket_policy_public_write_access",
-        "s3_bucket_public_access",
-        "sagemaker_notebook_instance_without_direct_internet_access_configured"
+        "sagemaker_notebook_instance_without_direct_internet_access_configured",
+        "ec2_confidential_workload_host_public_ip",
+        "ec2_confidential_workload_host_imdsv2_not_enforced",
+        "kms_key_enclave_attestation_bypassable_path"
       ]
     },
     {
@@ -573,11 +652,7 @@
       ],
       "Checks": [
         "dynamodb_tables_pitr_enabled",
-        "dynamodb_tables_pitr_enabled",
         "efs_have_backup_enabled",
-        "efs_have_backup_enabled",
-        "rds_instance_backup_enabled",
-        "rds_instance_backup_enabled",
         "rds_instance_backup_enabled",
         "redshift_cluster_automated_snapshot",
         "s3_bucket_object_versioning"
@@ -598,7 +673,6 @@
         "cloudtrail_kms_encryption_enabled",
         "dynamodb_accelerator_cluster_encryption_enabled",
         "dynamodb_tables_kms_cmk_encryption_enabled",
-        "dynamodb_tables_kms_cmk_encryption_enabled",
         "ec2_ebs_volume_encryption",
         "ec2_ebs_default_encryption",
         "efs_encryption_at_rest_enabled",
@@ -607,13 +681,12 @@
         "kms_cmk_rotation_enabled",
         "cloudwatch_log_group_kms_encryption_enabled",
         "rds_instance_storage_encrypted",
-        "rds_instance_storage_encrypted",
         "redshift_cluster_audit_logging",
-        "s3_bucket_default_encryption",
         "s3_bucket_default_encryption",
         "s3_bucket_secure_transport_policy",
         "sagemaker_notebook_instance_encryption_enabled",
-        "sns_topics_kms_encryption_at_rest_enabled"
+        "sns_topics_kms_encryption_at_rest_enabled",
+        "kms_key_enclave_attestation_not_enforced"
       ]
     },
     {
@@ -629,10 +702,10 @@
       ],
       "Checks": [
         "apigateway_restapi_logging_enabled",
+        "cloudtrail_bedrock_logging_enabled",
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudtrail_cloudwatch_logging_enabled",
         "cloudtrail_log_file_validation_enabled",
         "cloudwatch_log_group_retention_policy_specific_days_enabled",
@@ -643,7 +716,22 @@
         "redshift_cluster_audit_logging",
         "s3_bucket_server_access_logging_enabled",
         "securityhub_enabled",
-        "vpc_flow_logs_enabled"
+        "vpc_flow_logs_enabled",
+        "kms_key_enclave_debug_attestation_detected"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -663,7 +751,8 @@
         "ec2_ebs_volume_encryption",
         "s3_bucket_default_encryption",
         "s3_bucket_secure_transport_policy",
-        "s3_bucket_object_versioning"
+        "s3_bucket_object_versioning",
+        "kms_key_enclave_attestation_pcr_mismatch"
       ]
     },
     {
@@ -684,7 +773,8 @@
         "s3_bucket_default_encryption",
         "s3_bucket_secure_transport_policy",
         "s3_bucket_object_versioning",
-        "vpc_flow_logs_enabled"
+        "vpc_flow_logs_enabled",
+        "kms_key_enclave_attestation_unknown_image"
       ]
     },
     {
@@ -702,7 +792,6 @@
         "iam_password_policy_reuse_24",
         "iam_root_hardware_mfa_enabled",
         "iam_root_mfa_enabled",
-        "iam_user_mfa_enabled_console_access",
         "iam_user_mfa_enabled_console_access"
       ]
     },
@@ -726,7 +815,8 @@
         "s3_bucket_secure_transport_policy",
         "ec2_networkacl_allow_ingress_any_port",
         "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22",
-        "ec2_networkacl_allow_ingress_any_port"
+        "ec2_confidential_workload_host_unrestricted_ingress",
+        "ec2_confidential_workload_host_vsock_proxy_exposed"
       ]
     },
     {
@@ -744,13 +834,26 @@
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudtrail_cloudwatch_logging_enabled",
         "elb_ssl_listeners",
         "guardduty_is_enabled",
         "s3_bucket_secure_transport_policy",
         "s3_bucket_server_access_logging_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -768,7 +871,6 @@
         "cloudtrail_kms_encryption_enabled",
         "dynamodb_accelerator_cluster_encryption_enabled",
         "dynamodb_tables_kms_cmk_encryption_enabled",
-        "dynamodb_tables_kms_cmk_encryption_enabled",
         "ec2_ebs_volume_encryption",
         "ec2_ebs_default_encryption",
         "efs_encryption_at_rest_enabled",
@@ -777,9 +879,7 @@
         "opensearch_service_domains_encryption_at_rest_enabled",
         "cloudwatch_log_group_kms_encryption_enabled",
         "rds_instance_storage_encrypted",
-        "rds_instance_storage_encrypted",
         "redshift_cluster_audit_logging",
-        "s3_bucket_default_encryption",
         "s3_bucket_default_encryption",
         "s3_bucket_secure_transport_policy",
         "sagemaker_notebook_instance_encryption_enabled",

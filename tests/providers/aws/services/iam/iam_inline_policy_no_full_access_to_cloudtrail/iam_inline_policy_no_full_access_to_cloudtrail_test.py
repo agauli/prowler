@@ -38,12 +38,15 @@ class Test_iam_inline_policy_no_full_access_to_cloudtrail:
             PolicyDocument=dumps(policy_document_full_access),
         )
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=aws_provider,
-        ), mock.patch(
-            "prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail.iam_client",
-            new=IAM(aws_provider),
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail.iam_client",
+                new=IAM(aws_provider),
+            ),
         ):
             from prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail import (
                 iam_inline_policy_no_full_access_to_cloudtrail,
@@ -54,9 +57,9 @@ class Test_iam_inline_policy_no_full_access_to_cloudtrail:
             assert result[0].status == "FAIL"
             assert (
                 result[0].status_extended
-                == f"Inline Policy {policy_name} allows 'cloudtrail:*' privileges to all resources."
+                == f"Inline policy {policy_name} attached to role {role_name} allows 'cloudtrail:*' privileges to all resources."
             )
-            assert result[0].resource_id == "policy_cloudtrail_full"
+            assert result[0].resource_id == f"test_role/{policy_name}"
             assert result[0].resource_arn == role_arn
             assert result[0].region == "eu-west-1"
 
@@ -85,12 +88,15 @@ class Test_iam_inline_policy_no_full_access_to_cloudtrail:
             PolicyDocument=dumps(policy_document_full_access),
         )
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=aws_provider,
-        ), mock.patch(
-            "prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail.iam_client",
-            new=IAM(aws_provider),
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail.iam_client",
+                new=IAM(aws_provider),
+            ),
         ):
             from prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail import (
                 iam_inline_policy_no_full_access_to_cloudtrail,
@@ -101,9 +107,9 @@ class Test_iam_inline_policy_no_full_access_to_cloudtrail:
             assert result[0].status == "PASS"
             assert (
                 result[0].status_extended
-                == f"Inline Policy {policy_name} does not allow 'cloudtrail:*' privileges."
+                == f"Inline policy {policy_name} attached to role {role_name} does not allow 'cloudtrail:*' privileges."
             )
-            assert result[0].resource_id == "policy_no_cloudtrail_full"
+            assert result[0].resource_id == f"test_role/{policy_name}"
             assert result[0].resource_arn == role_arn
             assert result[0].region == "eu-west-1"
 
@@ -132,12 +138,15 @@ class Test_iam_inline_policy_no_full_access_to_cloudtrail:
             PolicyDocument=dumps(policy_document_full_access),
         )
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=aws_provider,
-        ), mock.patch(
-            "prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail.iam_client",
-            new=IAM(aws_provider),
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail.iam_client",
+                new=IAM(aws_provider),
+            ),
         ):
             from prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail import (
                 iam_inline_policy_no_full_access_to_cloudtrail,
@@ -148,9 +157,9 @@ class Test_iam_inline_policy_no_full_access_to_cloudtrail:
             assert result[0].status == "FAIL"
             assert (
                 result[0].status_extended
-                == f"Inline Policy {policy_name} allows 'cloudtrail:*' privileges to all resources."
+                == f"Inline policy {policy_name} attached to role {role_name} allows 'cloudtrail:*' privileges to all resources."
             )
-            assert result[0].resource_id == "policy_cloudtrail_full"
+            assert result[0].resource_id == f"test_role/{policy_name}"
             assert result[0].resource_arn == role_arn
             assert result[0].region == "eu-west-1"
 
@@ -183,12 +192,15 @@ class Test_iam_inline_policy_no_full_access_to_cloudtrail:
             PolicyDocument=dumps(policy_document_full_access),
         )
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=aws_provider,
-        ), mock.patch(
-            "prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail.iam_client",
-            new=IAM(aws_provider),
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail.iam_client",
+                new=IAM(aws_provider),
+            ),
         ):
             from prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail import (
                 iam_inline_policy_no_full_access_to_cloudtrail,
@@ -199,9 +211,9 @@ class Test_iam_inline_policy_no_full_access_to_cloudtrail:
             assert result[0].status == "PASS"
             assert (
                 result[0].status_extended
-                == f"Inline Policy {policy_name} does not allow 'cloudtrail:*' privileges."
+                == f"Inline policy {policy_name} attached to role {role_name} does not allow 'cloudtrail:*' privileges."
             )
-            assert result[0].resource_id == "policy_no_cloudtrail_full"
+            assert result[0].resource_id == f"test_role/{policy_name}"
             assert result[0].resource_arn == role_arn
             assert result[0].region == "eu-west-1"
 
@@ -234,12 +246,15 @@ class Test_iam_inline_policy_no_full_access_to_cloudtrail:
             PolicyDocument=dumps(policy_document_full_access),
         )
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=aws_provider,
-        ), mock.patch(
-            "prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail.iam_client",
-            new=IAM(aws_provider),
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail.iam_client",
+                new=IAM(aws_provider),
+            ),
         ):
             from prowler.providers.aws.services.iam.iam_inline_policy_no_full_access_to_cloudtrail.iam_inline_policy_no_full_access_to_cloudtrail import (
                 iam_inline_policy_no_full_access_to_cloudtrail,
@@ -250,8 +265,8 @@ class Test_iam_inline_policy_no_full_access_to_cloudtrail:
             assert result[0].status == "FAIL"
             assert (
                 result[0].status_extended
-                == f"Inline Policy {policy_name} allows 'cloudtrail:*' privileges to all resources."
+                == f"Inline policy {policy_name} attached to role {role_name} allows 'cloudtrail:*' privileges to all resources."
             )
-            assert result[0].resource_id == "policy_cloudtrail_full"
+            assert result[0].resource_id == f"test_role/{policy_name}"
             assert result[0].resource_arn == role_arn
             assert result[0].region == "eu-west-1"

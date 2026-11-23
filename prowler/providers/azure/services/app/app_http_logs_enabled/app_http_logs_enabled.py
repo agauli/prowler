@@ -6,23 +6,28 @@ class app_http_logs_enabled(Check):
     def execute(self) -> Check_Report_Azure:
         findings = []
 
-        for subscription_name, apps in app_client.apps.items():
-            for app_name, app in apps.items():
+        for subscription_id, apps in app_client.apps.items():
+            subscription_name = app_client.subscriptions.get(
+                subscription_id, subscription_id
+            )
+            for app in apps.values():
                 if "functionapp" not in app.kind:
-                    report = Check_Report_Azure(self.metadata())
+                    report = Check_Report_Azure(metadata=self.metadata(), resource=app)
+                    report.subscription = subscription_id
                     report.status = "FAIL"
-                    report.subscription = subscription_name
-                    report.resource_name = app_name
-                    report.resource_id = app.resource_id
                     if not app.monitor_diagnostic_settings:
-                        report.status_extended = f"App {app_name} does not have a diagnostic setting in subscription {subscription_name}."
+                        report.status_extended = f"App {app.name} does not have a diagnostic setting in subscription {subscription_name} ({subscription_id})."
                     else:
                         for diagnostic_setting in app.monitor_diagnostic_settings:
-                            report.status_extended = f"App {app_name} does not have HTTP Logs enabled in diagnostic setting {diagnostic_setting.name} in subscription {subscription_name}"
+                            report.status_extended = f"App {app.name} does not have HTTP Logs enabled in diagnostic setting {diagnostic_setting.name} in subscription {subscription_name} ({subscription_id})"
                             for log in diagnostic_setting.logs:
                                 if log.category == "AppServiceHTTPLogs" and log.enabled:
                                     report.status = "PASS"
-                                    report.status_extended = f"App {app_name} has HTTP Logs enabled in diagnostic setting {diagnostic_setting.name} in subscription {subscription_name}"
+                                    report.status_extended = f"App {app.name} has HTTP Logs enabled in diagnostic setting {diagnostic_setting.name} in subscription {subscription_name} ({subscription_id})"
+                                    break
+                                elif log.category_group == "allLogs" and log.enabled:
+                                    report.status = "PASS"
+                                    report.status_extended = f"App {app.name} has allLogs category group which includes HTTP Logs enabled in diagnostic setting {diagnostic_setting.name} in subscription {subscription_name} ({subscription_id})"
                                     break
                     findings.append(report)
 

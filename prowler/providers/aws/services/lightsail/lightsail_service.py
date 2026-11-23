@@ -1,6 +1,6 @@
 from typing import Dict, List
 
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
@@ -11,13 +11,13 @@ class Lightsail(AWSService):
     def __init__(self, provider):
         super().__init__(__class__.__name__, provider)
         self.instances = {}
-        self.__threading_call__(self.__get_instances__)
+        self.__threading_call__(self._get_instances)
         self.databases = {}
-        self.__threading_call__(self.__get_databases__)
+        self.__threading_call__(self._get_databases)
         self.static_ips = {}
-        self.__threading_call__(self.__get_static_ips__)
+        self.__threading_call__(self._get_static_ips)
 
-    def __get_instances__(self, regional_client):
+    def _get_instances(self, regional_client):
         logger.info("Lightsail - Getting instances...")
         try:
             instance_paginator = regional_client.get_paginator("get_instances")
@@ -28,7 +28,7 @@ class Lightsail(AWSService):
                         f"arn:{self.audited_partition}:lightsail:{regional_client.region}:{self.audited_account}:Instance",
                     )
 
-                    if not self.audit_resources or is_resource_filtered(
+                    if not self.audit_resources or (
                         is_resource_filtered(arn, self.audit_resources)
                     ):
                         ports = []
@@ -66,6 +66,7 @@ class Lightsail(AWSService):
                         self.instances[arn] = Instance(
                             name=instance.get("name", ""),
                             id=instance.get("supportCode", ""),
+                            arn=arn,
                             tags=instance.get("tags", []),
                             region=instance.get(
                                 "location", {"regionName": regional_client.region}
@@ -80,6 +81,8 @@ class Lightsail(AWSService):
                             ip_address_type=instance.get("ipAddressType", "ipv4"),
                             ports=ports,
                             auto_snapshot=auto_snapshot_enabled,
+                            blueprint_id=instance.get("blueprintId", ""),
+                            blueprint_name=instance.get("blueprintName", ""),
                         )
 
         except Exception as error:
@@ -87,7 +90,7 @@ class Lightsail(AWSService):
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_databases__(self, regional_client):
+    def _get_databases(self, regional_client):
         logger.info("Lightsail - Getting databases...")
         try:
             databases_paginator = regional_client.get_paginator(
@@ -106,6 +109,7 @@ class Lightsail(AWSService):
                         self.databases[arn] = Database(
                             name=database.get("name", ""),
                             id=database.get("supportCode", ""),
+                            arn=arn,
                             tags=database.get("tags", []),
                             region=database.get(
                                 "location", {"regionName": regional_client.region}
@@ -125,7 +129,7 @@ class Lightsail(AWSService):
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_static_ips__(self, regional_client):
+    def _get_static_ips(self, regional_client):
         logger.info("Lightsail - Getting static IPs...")
         try:
             static_ips_paginator = regional_client.get_paginator("get_static_ips")
@@ -142,6 +146,7 @@ class Lightsail(AWSService):
                         self.static_ips[arn] = StaticIP(
                             name=static_ip.get("name", ""),
                             id=static_ip.get("supportCode", ""),
+                            arn=arn,
                             region=static_ip.get(
                                 "location", {"regionName": regional_client.region}
                             ).get("regionName", ""),
@@ -169,6 +174,7 @@ class PortRange(BaseModel):
 class Instance(BaseModel):
     name: str
     id: str
+    arn: str
     tags: List[Dict[str, str]]
     region: str
     availability_zone: str
@@ -179,11 +185,14 @@ class Instance(BaseModel):
     ip_address_type: str
     ports: List[PortRange]
     auto_snapshot: bool
+    blueprint_id: str = ""
+    blueprint_name: str = ""
 
 
 class Database(BaseModel):
     name: str
     id: str
+    arn: str
     tags: List[Dict[str, str]]
     region: str
     availability_zone: str
@@ -197,6 +206,7 @@ class Database(BaseModel):
 class StaticIP(BaseModel):
     name: str
     id: str
+    arn: str
     region: str
     availability_zone: str
     ip_address: str

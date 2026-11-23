@@ -6,12 +6,17 @@ from datetime import datetime
 import botocore
 import mock
 from boto3 import client, resource
+from botocore.exceptions import ClientError
 from dateutil.tz import tzutc
 from freezegun import freeze_time
 from moto import mock_aws
 
 from prowler.config.config import encoding_format_utf_8
-from prowler.providers.aws.services.ec2.ec2_service import EC2
+from prowler.providers.aws.services.ec2.ec2_service import (
+    DESCRIBE_IMAGES_IMAGE_IDS_BATCH_SIZE,
+    EC2,
+    Snapshot,
+)
 from tests.providers.aws.utils import (
     AWS_ACCOUNT_NUMBER,
     AWS_REGION_EU_WEST_1,
@@ -21,8 +26,69 @@ from tests.providers.aws.utils import (
 
 EXAMPLE_AMI_ID = "ami-12c6146b"
 MOCK_DATETIME = datetime(2023, 1, 4, 7, 27, 30, tzinfo=tzutc())
+MOCK_STATE_TRANSITION_REASON = "User initiated (2021-11-01 17:18:00 GMT)"
 
-orig = botocore.client.BaseClient._make_api_call
+make_api_call = botocore.client.BaseClient._make_api_call
+
+
+def mock_make_api_call(self, operation_name, kwarg):
+    if operation_name == "DescribeLaunchTemplateVersions":
+        return {
+            "LaunchTemplateVersions": [
+                {
+                    "VersionNumber": 123,
+                    "LaunchTemplateData": {
+                        "UserData": b64encode(
+                            "foobar123".encode(encoding_format_utf_8)
+                        ).decode(encoding_format_utf_8),
+                        "NetworkInterfaces": [{"AssociatePublicIpAddress": True}],
+                        "MetadataOptions": {
+                            "HttpEndpoint": "enabled",
+                            "HttpTokens": "optional",
+                        },
+                    },
+                }
+            ]
+        }
+    if operation_name == "DescribeClientVpnEndpoints":
+        return {
+            "ClientVpnEndpoints": [
+                {
+                    "ClientVpnEndpointId": "cvpn-endpoint-1234567890abcdef0",
+                    "ConnectionLogOptions": {
+                        "Enabled": True,
+                        "CloudwatchLogGroup": "string",
+                        "CloudwatchLogStream": "string",
+                    },
+                    "Tags": [{"Key": "vpnendpoint", "Value": "test"}],
+                }
+            ]
+        }
+    return make_api_call(self, operation_name, kwarg)
+
+
+# moto does not store the entries of a managed prefix list, so tests set them here by ID
+PREFIX_LIST_ENTRIES = {}
+
+
+def mock_make_api_call_prefix_list_entries(self, operation_name, kwarg):
+    if operation_name == "GetManagedPrefixListEntries":
+        return {
+            "Entries": [
+                {"Cidr": cidr}
+                for cidr in PREFIX_LIST_ENTRIES.get(kwarg["PrefixListId"], [])
+            ]
+        }
+    return make_api_call(self, operation_name, kwarg)
+
+
+def mock_make_api_call_with_state_transition_reason(self, operation_name, kwarg):
+    response = make_api_call(self, operation_name, kwarg)
+    if operation_name == "DescribeInstances":
+        for reservation in response.get("Reservations", []):
+            for instance in reservation.get("Instances", []):
+                instance["StateTransitionReason"] = MOCK_STATE_TRANSITION_REASON
+    return response
 
 
 class Test_EC2_Service:
@@ -67,10 +133,315 @@ class Test_EC2_Service:
         ec2 = EC2(aws_provider)
         assert ec2.audited_account == AWS_ACCOUNT_NUMBER
 
+    def test_snapshot_limit_bounds_public_attribute_calls_to_latest_selected(self):
+        class FakeEC2Client:
+            def __init__(self):
+                self.calls = []
+
+            def describe_snapshot_attribute(self, **kwargs):
+                self.calls.append(kwargs["SnapshotId"])
+                return {"CreateVolumePermissions": []}
+
+        regional_client = FakeEC2Client()
+        ec2 = EC2.__new__(EC2)
+        ec2.snapshots = [
+            Snapshot(
+                id="snap-old",
+                arn="arn:aws:ec2:eu-west-1:123456789012:snapshot/snap-old",
+                region=AWS_REGION_EU_WEST_1,
+                encrypted=True,
+                start_time=datetime(2024, 1, 1),
+                volume="vol-old",
+            ),
+            Snapshot(
+                id="snap-new",
+                arn="arn:aws:ec2:eu-west-1:123456789012:snapshot/snap-new",
+                region=AWS_REGION_EU_WEST_1,
+                encrypted=True,
+                start_time=datetime(2024, 1, 2),
+                volume="vol-new",
+            ),
+        ]
+        ec2.snapshot_limit = 1
+        ec2.regional_clients = {AWS_REGION_EU_WEST_1: regional_client}
+
+        ec2._select_snapshots_for_analysis()
+        for snapshot in ec2.snapshots:
+            ec2._determine_public_snapshots(snapshot)
+
+        assert [snapshot.id for snapshot in ec2.snapshots] == ["snap-new"]
+        assert regional_client.calls == ["snap-new"]
+
+    def test_snapshot_limit_preserves_volume_index_and_selects_global_latest(self):
+        class FakePaginator:
+            def __init__(self, snapshots):
+                self.snapshots = snapshots
+
+            def paginate(self, **kwargs):
+                assert "PageSize" not in kwargs
+                return [{"Snapshots": self.snapshots}]
+
+        class FakeEC2Client:
+            def __init__(self, region, snapshots):
+                self.region = region
+                self.snapshots = snapshots
+
+            def get_paginator(self, name):
+                assert name == "describe_snapshots"
+                return FakePaginator(self.snapshots)
+
+        ec2 = EC2.__new__(EC2)
+        ec2.snapshots = []
+        ec2.volumes_with_snapshots = {}
+        ec2.regions_with_snapshots = {}
+        ec2.snapshot_limit = 1
+        ec2.audit_resources = []
+        ec2.audited_partition = "aws"
+        ec2.audited_account = AWS_ACCOUNT_NUMBER
+        old_client = FakeEC2Client(
+            AWS_REGION_EU_WEST_1,
+            [
+                {
+                    "SnapshotId": "snap-old",
+                    "VolumeId": "vol-old",
+                    "StartTime": datetime(2024, 1, 1),
+                }
+            ],
+        )
+        new_client = FakeEC2Client(
+            AWS_REGION_US_EAST_1,
+            [
+                {
+                    "SnapshotId": "snap-new",
+                    "VolumeId": "vol-new",
+                    "StartTime": datetime(2024, 1, 2),
+                }
+            ],
+        )
+
+        ec2._describe_snapshots(old_client)
+        ec2._describe_snapshots(new_client)
+        ec2._select_snapshots_for_analysis()
+
+        assert ec2.volumes_with_snapshots == {"vol-old": True, "vol-new": True}
+        assert [snapshot.id for snapshot in ec2.snapshots] == ["snap-new"]
+
+    def test_describe_images_by_id_preserves_valid_amis_when_batch_has_missing_ids(
+        self,
+    ):
+        missing_image_id = "ami-0000-missing"
+        valid_image_ids = [
+            f"ami-{index:04d}"
+            for index in range(1, DESCRIBE_IMAGES_IMAGE_IDS_BATCH_SIZE + 1)
+        ]
+        instance_image_ids = valid_image_ids + [missing_image_id]
+
+        class FakeInstance:
+            def __init__(self, image_id):
+                self.region = AWS_REGION_US_EAST_1
+                self.image_id = image_id
+
+        class FakeEC2Client:
+            region = AWS_REGION_US_EAST_1
+
+            def __init__(self):
+                self.image_id_calls = []
+
+            def describe_images(self, **kwargs):
+                if kwargs.get("Owners") == ["self"]:
+                    return {"Images": []}
+
+                image_ids = kwargs["ImageIds"]
+                self.image_id_calls.append(image_ids)
+                if missing_image_id in image_ids:
+                    raise ClientError(
+                        {
+                            "Error": {
+                                "Code": "InvalidAMIID.NotFound",
+                                "Message": "The image id does not exist",
+                            }
+                        },
+                        "DescribeImages",
+                    )
+
+                return {
+                    "Images": [
+                        {
+                            "ImageId": image_id,
+                            "Public": True,
+                            "ImageOwnerAlias": "amazon",
+                        }
+                        for image_id in image_ids
+                    ]
+                }
+
+        regional_client = FakeEC2Client()
+        ec2 = EC2.__new__(EC2)
+        ec2.instances = [FakeInstance(image_id) for image_id in instance_image_ids]
+        ec2.images = []
+        ec2.images_by_id = {}
+        ec2.instance_images_by_id = {}
+        ec2.image_lookup_failures = set()
+        ec2.audit_resources = []
+        ec2.audited_partition = "aws"
+        ec2.audited_account = AWS_ACCOUNT_NUMBER
+
+        ec2._describe_images(regional_client)
+
+        assert (
+            len(regional_client.image_id_calls[0])
+            == DESCRIBE_IMAGES_IMAGE_IDS_BATCH_SIZE
+        )
+        assert regional_client.image_id_calls[-1] == [valid_image_ids[-1]]
+        assert missing_image_id not in ec2.images_by_id
+        assert set(ec2.images_by_id) == set(valid_image_ids)
+        assert {image.owner for image in ec2.images} == {"amazon"}
+
+    @staticmethod
+    def _images_by_id_service(instance_image_ids, describe_images):
+        """An EC2 service built by hand around a fake ``describe_images``."""
+
+        class FakeInstance:
+            def __init__(self, image_id):
+                self.region = AWS_REGION_US_EAST_1
+                self.image_id = image_id
+
+        class FakeEC2Client:
+            region = AWS_REGION_US_EAST_1
+
+        client = FakeEC2Client()
+        client.describe_images = describe_images
+        ec2 = EC2.__new__(EC2)
+        ec2.instances = [FakeInstance(image_id) for image_id in instance_image_ids]
+        ec2.images = []
+        ec2.images_by_id = {}
+        ec2.instance_images_by_id = {}
+        ec2.image_lookup_failures = set()
+        ec2.audit_resources = []
+        ec2.audited_partition = "aws"
+        ec2.audited_account = AWS_ACCOUNT_NUMBER
+        ec2._describe_images(client)
+        return ec2
+
+    def test_describe_images_by_id_isolates_an_unavailable_ami(self):
+        unavailable = "ami-0000-unavailable"
+        valid = ["ami-0001", "ami-0002", "ami-0003"]
+
+        def describe_images(**kwargs):
+            if kwargs.get("Owners") == ["self"]:
+                return {"Images": []}
+            if unavailable in kwargs["ImageIds"]:
+                raise ClientError(
+                    {"Error": {"Code": "InvalidAMIID.Unavailable", "Message": "gone"}},
+                    "DescribeImages",
+                )
+            return {
+                "Images": [
+                    {"ImageId": i, "Public": True, "ImageOwnerAlias": "amazon"}
+                    for i in kwargs["ImageIds"]
+                ]
+            }
+
+        ec2 = self._images_by_id_service(valid + [unavailable], describe_images)
+
+        assert set(ec2.images_by_id) == set(valid)
+        assert ec2.image_lookup_failures == set()
+
+    def test_describe_images_by_id_records_a_denied_lookup(self):
+        image_ids = ["ami-0001", "ami-0002"]
+
+        def describe_images(**kwargs):
+            if kwargs.get("Owners") == ["self"]:
+                return {"Images": []}
+            raise ClientError(
+                {"Error": {"Code": "UnauthorizedOperation", "Message": "denied"}},
+                "DescribeImages",
+            )
+
+        ec2 = self._images_by_id_service(image_ids, describe_images)
+
+        assert ec2.image_lookup_failures == set(image_ids)
+        assert ec2.instance_images_by_id == {}
+
+    def test_describe_images_by_id_labels_this_accounts_ami_as_self(self):
+        def describe_images(**kwargs):
+            if kwargs.get("Owners") == ["self"]:
+                return {"Images": []}
+            return {
+                "Images": [
+                    {
+                        "ImageId": "ami-own",
+                        "Public": False,
+                        "OwnerId": AWS_ACCOUNT_NUMBER,
+                    }
+                ]
+            }
+
+        ec2 = self._images_by_id_service(["ami-own"], describe_images)
+
+        assert ec2.instance_images_by_id["ami-own"].owner == "self"
+
+    def test_describe_images_ignores_non_amazon_public_images_returned_by_image_id(
+        self,
+    ):
+        marketplace_image_id = "ami-marketplace-public"
+        vendor_image_id = "ami-vendor-public"
+
+        class FakeInstance:
+            def __init__(self, image_id):
+                self.region = AWS_REGION_US_EAST_1
+                self.image_id = image_id
+
+        class FakeEC2Client:
+            region = AWS_REGION_US_EAST_1
+
+            def describe_images(self, **kwargs):
+                if kwargs.get("Owners") == ["self"]:
+                    return {"Images": []}
+
+                return {
+                    "Images": [
+                        {
+                            "ImageId": marketplace_image_id,
+                            "Public": True,
+                            "ImageOwnerAlias": "aws-marketplace",
+                        },
+                        {
+                            "ImageId": vendor_image_id,
+                            "Public": True,
+                        },
+                    ]
+                }
+
+        ec2 = EC2.__new__(EC2)
+        ec2.instances = [
+            FakeInstance(marketplace_image_id),
+            FakeInstance(vendor_image_id),
+        ]
+        ec2.images = []
+        ec2.images_by_id = {}
+        ec2.instance_images_by_id = {}
+        ec2.image_lookup_failures = set()
+        ec2.audit_resources = []
+        ec2.audited_partition = "aws"
+        ec2.audited_account = AWS_ACCOUNT_NUMBER
+
+        ec2._describe_images(FakeEC2Client())
+
+        assert ec2.images == []
+        assert ec2.images_by_id == {}
+        # Kept apart, for the provenance of the instances that run them.
+        assert set(ec2.instance_images_by_id) == {marketplace_image_id, vendor_image_id}
+        assert {i.owner for i in ec2.instance_images_by_id.values()} == {"third_party"}
+
     # Test EC2 Describe Instances
+    @mock.patch(
+        "botocore.client.BaseClient._make_api_call",
+        new=mock_make_api_call_with_state_transition_reason,
+    )
     @mock_aws
     @freeze_time(MOCK_DATETIME)
-    def test__describe_instances__(self):
+    def test_describe_instances(self):
         # Generate EC2 Client
         ec2_resource = resource("ec2", region_name=AWS_REGION_US_EAST_1)
         ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
@@ -98,9 +469,10 @@ class Test_EC2_Service:
         assert ec2.instances[0].state == "running"
         assert re.match(r"ami-[0-9a-z]{8}", ec2.instances[0].image_id)
         assert ec2.instances[0].launch_time == MOCK_DATETIME
+        assert ec2.instances[0].state_transition_reason == MOCK_STATE_TRANSITION_REASON
         assert not ec2.instances[0].user_data
-        assert not ec2.instances[0].http_tokens
-        assert not ec2.instances[0].http_endpoint
+        assert ec2.instances[0].http_tokens == "optional"
+        assert ec2.instances[0].http_endpoint == "enabled"
         assert not ec2.instances[0].instance_profile
         assert ipaddress.ip_address(ec2.instances[0].private_ip).is_private
         assert (
@@ -113,9 +485,66 @@ class Test_EC2_Service:
             == f"ec2-{ec2.instances[0].public_ip.replace('.', '-')}.compute-1.amazonaws.com"
         )
 
+        assert ec2.instances[0].network_interfaces is not None
+        assert ec2.instances[0].virtualization_type == "hvm"
+
+    # Test EC2 Describe Instances maps EnclaveOptions, HibernationOptions, Platform
+    @mock_aws
+    def test_describe_instances_maps_enclave_hibernation_platform(self):
+        # moto does not persist EnclaveOptions/HibernationOptions/Platform on
+        # describe_instances, so we mock the paginator's response and verify
+        # that _describe_instances extracts these fields into the model.
+        aws_provider = set_mocked_aws_provider(
+            [AWS_REGION_EU_WEST_1, AWS_REGION_US_EAST_1]
+        )
+        ec2 = EC2(aws_provider)
+
+        fake_page = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-0123456789abcdef0",
+                            "State": {"Name": "running"},
+                            "InstanceType": "m5.xlarge",
+                            "ImageId": EXAMPLE_AMI_ID,
+                            "LaunchTime": MOCK_DATETIME,
+                            "PrivateDnsName": "ip-10-0-0-1.ec2.internal",
+                            "PrivateIpAddress": "10.0.0.1",
+                            "SubnetId": "subnet-1234",
+                            "Monitoring": {"State": "disabled"},
+                            "MetadataOptions": {
+                                "HttpTokens": "required",
+                                "HttpEndpoint": "enabled",
+                            },
+                            "EnclaveOptions": {"Enabled": True},
+                            "HibernationOptions": {"Configured": True},
+                            "Platform": "windows",
+                        }
+                    ]
+                }
+            ]
+        }
+
+        fake_paginator = mock.MagicMock()
+        fake_paginator.paginate.return_value = iter([fake_page])
+
+        regional_client = ec2.regional_clients[AWS_REGION_US_EAST_1]
+        with mock.patch.object(
+            regional_client, "get_paginator", return_value=fake_paginator
+        ):
+            ec2.instances = []
+            ec2._describe_instances(regional_client)
+
+        matched = [i for i in ec2.instances if i.id == "i-0123456789abcdef0"]
+        assert len(matched) == 1
+        assert matched[0].enclaves_enabled is True
+        assert matched[0].hibernation_enabled is True
+        assert matched[0].platform == "windows"
+
     # Test EC2 Describe Security Groups
     @mock_aws
-    def test__describe_security_groups__(self):
+    def test_describe_security_groups(self):
         # Generate EC2 Client
         ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
         # Create EC2 Security Group
@@ -182,9 +611,39 @@ class Test_EC2_Service:
                     {"Key": "test", "Value": "test"},
                 ]
 
+    # Test EC2 Describe Managed Prefix Lists
+    @mock.patch(
+        "botocore.client.BaseClient._make_api_call",
+        new=mock_make_api_call_prefix_list_entries,
+    )
+    @mock_aws
+    def test_describe_managed_prefix_lists(self):
+        # Generate EC2 Client
+        ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
+        prefix_list = ec2_client.create_managed_prefix_list(
+            PrefixListName="test-prefix-list",
+            AddressFamily="IPv4",
+            MaxEntries=5,
+        )["PrefixList"]
+        PREFIX_LIST_ENTRIES[prefix_list["PrefixListId"]] = ["0.0.0.0/1", "128.0.0.0/1"]
+        # EC2 client for this test class
+        aws_provider = set_mocked_aws_provider(
+            [AWS_REGION_EU_WEST_1, AWS_REGION_US_EAST_1]
+        )
+        ec2 = EC2(aws_provider)
+
+        # AWS-managed prefix lists, such as the S3 one moto creates, are skipped
+        assert list(ec2.managed_prefix_lists) == [prefix_list["PrefixListId"]]
+        managed_prefix_list = ec2.managed_prefix_lists[prefix_list["PrefixListId"]]
+        assert managed_prefix_list.id == prefix_list["PrefixListId"]
+        assert managed_prefix_list.arn == prefix_list["PrefixListArn"]
+        assert managed_prefix_list.name == "test-prefix-list"
+        assert managed_prefix_list.region == AWS_REGION_US_EAST_1
+        assert managed_prefix_list.entries == ["0.0.0.0/1", "128.0.0.0/1"]
+
     # Test EC2 Describe Nacls
     @mock_aws
-    def test__describe_network_acls__(self):
+    def test_describe_network_acls(self):
         # Generate EC2 Client
         ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
         ec2_resource = resource("ec2", region_name=AWS_REGION_US_EAST_1)
@@ -208,21 +667,23 @@ class Test_EC2_Service:
         ec2 = EC2(aws_provider)
 
         assert nacl_id in str(ec2.network_acls)
-        for acl in ec2.network_acls:
+        for arn, acl in ec2.network_acls.items():
             if acl.id == nacl_id:
                 assert re.match(r"acl-[0-9a-z]{8}", acl.id)
                 assert (
-                    acl.arn
+                    arn
                     == f"arn:{aws_provider.identity.partition}:ec2:{AWS_REGION_US_EAST_1}:{AWS_ACCOUNT_NUMBER}:network-acl/{acl.id}"
                 )
                 assert acl.entries == []
+                assert not acl.in_use
+                assert not acl.default
                 assert acl.tags == [
                     {"Key": "test", "Value": "test"},
                 ]
 
     # Test EC2 Describe Snapshots
     @mock_aws
-    def test__describe_snapshots__(self):
+    def test_describe_snapshots(self):
         # Generate EC2 Client
         ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
         ec2_resource = resource("ec2", region_name=AWS_REGION_US_EAST_1)
@@ -305,9 +766,27 @@ class Test_EC2_Service:
                 assert not snapshot.encrypted
                 assert snapshot.public
 
+    @mock_aws
+    def test_snapshot_limit_exposes_only_selected_snapshots(self):
+        ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
+        ec2_resource = resource("ec2", region_name=AWS_REGION_US_EAST_1)
+        volume_id = ec2_resource.create_volume(
+            AvailabilityZone="us-east-1a",
+            Size=80,
+            VolumeType="gp2",
+        ).id
+        for _ in range(3):
+            ec2_client.create_snapshot(VolumeId=volume_id)
+        aws_provider = set_mocked_aws_provider(
+            [AWS_REGION_US_EAST_1], audit_config={"max_ebs_snapshots": 1}
+        )
+        ec2 = EC2(aws_provider)
+
+        assert len(ec2.snapshots) == 1
+
     # Test EC2 Instance User Data
     @mock_aws
-    def test__get_instance_user_data__(self):
+    def test_get_instance_user_data(self):
         user_data = "This is some user_data"
         ec2 = resource("ec2", region_name=AWS_REGION_US_EAST_1)
         ec2.create_instances(
@@ -343,7 +822,7 @@ class Test_EC2_Service:
                 assert result.status
 
     # Test EC2 get_snapshot_block_public_access_state
-    def test__get_snapshot_block_public_access_state__(self):
+    def test_get_snapshot_block_public_access_state(self):
         from prowler.providers.aws.services.ec2.ec2_service import (
             EbsSnapshotBlockPublicAccess,
         )
@@ -357,21 +836,24 @@ class Test_EC2_Service:
         ec2_client.audited_account = AWS_ACCOUNT_NUMBER
         ec2_client.region = AWS_REGION_US_EAST_1
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_aws_provider(),
-        ), mock.patch(
-            "prowler.providers.aws.services.ec2.ec2_client.ec2_client",
-            new=ec2_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_aws_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.ec2.ec2_client.ec2_client",
+                new=ec2_client,
+            ),
         ):
             assert (
                 ec2_client.ebs_block_public_access_snapshots_states[0].status
                 == "block-all-sharing"
             )
 
-    # Test EC2 __get_resources_for_regions__
+    # Test EC2 _get_resources_for_regions
     @mock_aws
-    def test__get_resources_for_regions__(self):
+    def test_get_resources_for_regions(self):
         # Generate EC2 Client
         ec2_resource = resource("ec2", region_name=AWS_REGION_US_EAST_1)
         ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
@@ -417,9 +899,9 @@ class Test_EC2_Service:
         assert ec2.attributes_for_regions[AWS_REGION_US_EAST_1]["has_instances"]
         assert ec2.attributes_for_regions[AWS_REGION_US_EAST_1]["has_volumes"]
 
-    # Test __get_instance_metadata_defaults__
+    # Test _get_instance_metadata_defaults
     @mock_aws
-    def test__get_instance_metadata_defaults__(self):
+    def test_get_instance_metadata_defaults(self):
         from prowler.providers.aws.services.ec2.ec2_service import (
             InstanceMetadataDefaults,
         )
@@ -433,12 +915,15 @@ class Test_EC2_Service:
         ec2_client.audited_account = AWS_ACCOUNT_NUMBER
         ec2_client.region = AWS_REGION_US_EAST_1
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_aws_provider(),
-        ), mock.patch(
-            "prowler.providers.aws.services.ec2.ec2_client.ec2_client",
-            new=ec2_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_aws_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.ec2.ec2_client.ec2_client",
+                new=ec2_client,
+            ),
         ):
             assert ec2_client.instance_metadata_defaults[0].http_tokens == "required"
 
@@ -475,7 +960,7 @@ class Test_EC2_Service:
 
     # Test EC2 Describe Network Interfaces
     @mock_aws
-    def test__describe_network_interfaces__(self):
+    def test_describe_network_interfaces(self):
         # Generate EC2 Client
         ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
         ec2_resource = resource("ec2", region_name=AWS_REGION_US_EAST_1)
@@ -512,25 +997,25 @@ class Test_EC2_Service:
         )
         ec2 = EC2(aws_provider)
         assert len(ec2.network_interfaces) == 1
-        assert ec2.network_interfaces[0].association
-        assert ec2.network_interfaces[0].attachment
-        assert ec2.network_interfaces[0].id == eni.id
-        assert ec2.network_interfaces[0].private_ip == eni.private_ip_address
-        assert ec2.network_interfaces[0].subnet_id == subnet.id
-        assert ec2.network_interfaces[0].type == eni.interface_type
-        assert ec2.network_interfaces[0].vpc_id == vpc.id
-        assert ec2.network_interfaces[0].region == AWS_REGION_US_EAST_1
-        assert ec2.network_interfaces[0].tags == [
+        assert ec2.network_interfaces[eni.id].association
+        assert ec2.network_interfaces[eni.id].attachment
+        assert ec2.network_interfaces[eni.id].id == eni.id
+        assert ec2.network_interfaces[eni.id].private_ip == eni.private_ip_address
+        assert ec2.network_interfaces[eni.id].subnet_id == subnet.id
+        assert ec2.network_interfaces[eni.id].type == eni.interface_type
+        assert ec2.network_interfaces[eni.id].vpc_id == vpc.id
+        assert ec2.network_interfaces[eni.id].region == AWS_REGION_US_EAST_1
+        assert ec2.network_interfaces[eni.id].tags == [
             {"Key": "string", "Value": "string"},
         ]
         # Check if ENI was added to security group
         for sg in ec2.security_groups.values():
             if sg.id == eni.groups[0]["GroupId"]:
-                assert sg.network_interfaces == ec2.network_interfaces
+                assert sg.network_interfaces[0] == ec2.network_interfaces[eni.id]
 
     # Test EC2 Describe Images
     @mock_aws
-    def test__describe_images__(self):
+    def test_describe_images(self):
         # Generate EC2 Client
         ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
         ec2_resource = resource("ec2", region_name=AWS_REGION_US_EAST_1)
@@ -563,16 +1048,21 @@ class Test_EC2_Service:
         )
         ec2 = EC2(aws_provider)
 
-        assert len(ec2.images) == 1
-        assert ec2.images[0].id == image_id
-        assert re.match(r"ami-[0-9a-z]{8}", ec2.images[0].id)
+        # Filter for user-created images (owner="self")
+        user_images = [img for img in ec2.images if img.owner == "self"]
+        assert len(user_images) == 1
+
+        user_image = user_images[0]
+        assert user_image.id == image_id
+        assert re.match(r"ami-[0-9a-z]{8}", user_image.id)
         assert (
-            ec2.images[0].arn
-            == f"arn:{aws_provider.identity.partition}:ec2:{AWS_REGION_US_EAST_1}:{AWS_ACCOUNT_NUMBER}:image/{ec2.images[0].id}"
+            user_image.arn
+            == f"arn:{aws_provider.identity.partition}:ec2:{AWS_REGION_US_EAST_1}:{AWS_ACCOUNT_NUMBER}:image/{user_image.id}"
         )
-        assert not ec2.images[0].public
-        assert ec2.images[0].region == AWS_REGION_US_EAST_1
-        assert ec2.images[0].tags == [
+        assert user_image.deprecation_time == instance.image.deprecation_time
+        assert not user_image.public
+        assert user_image.region == AWS_REGION_US_EAST_1
+        assert user_image.tags == [
             {
                 "Key": "Base_AMI_Name",
                 "Value": "Deep Learning Base AMI (Amazon Linux 2) Version 31.0",
@@ -580,9 +1070,14 @@ class Test_EC2_Service:
             {"Key": "OS_Version", "Value": "AWS Linux 2"},
         ]
 
+        # Amazon public AMIs are fetched by targeted instance ImageIds only when
+        # AWS identifies them as Amazon-owned. Moto does not expose that owner
+        # alias for its fixture AMIs, so this service test only verifies the
+        # self-owned AMI behavior used by ec2_ami_public.
+
     # Test EC2 Describe Volumes
     @mock_aws
-    def test__describe_volumes__(self):
+    def test_describe_volumes(self):
         # Generate EC2 Client
         ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
         # Create Volume
@@ -639,6 +1134,14 @@ class Test_EC2_Service:
                     KNOWN_SECRET_USER_DATA.encode(encoding_format_utf_8)
                 ).decode(encoding_format_utf_8),
             },
+            TagSpecifications=[
+                {
+                    "ResourceType": "launch-template",
+                    "Tags": [
+                        {"Key": "test", "Value": "test"},
+                    ],
+                }
+            ],
         )
 
         # EC2 client for this test class
@@ -654,36 +1157,85 @@ class Test_EC2_Service:
             ec2.launch_templates[0].arn
             == f"arn:aws:ec2:{AWS_REGION_US_EAST_1}:{AWS_ACCOUNT_NUMBER}:launch-template/{ec2.launch_templates[0].id}"
         )
+        assert ec2.launch_templates[0].tags == [
+            {"Key": "test", "Value": "test"},
+        ]
 
     # Test EC2 Describe Launch Templates
     @mock_aws
-    def test__get_launch_template_versions__(self):
+    @mock.patch("botocore.client.BaseClient._make_api_call", new=mock_make_api_call)
+    def test_describe_launch_template_versions(self):
         # Generate EC2 Client
         ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
 
         TEMPLATE_NAME = "tester1"
         TEMPLATE_INSTANCE_TYPE = "c5.large"
-        KNOWN_SECRET_USER_DATA = "DB_PASSWORD=foobar123"
 
         # Create EC2 Launch Template API
         ec2_client.create_launch_template(
             LaunchTemplateName=TEMPLATE_NAME,
-            VersionDescription="Test EC Launch Template 1",
+            VersionDescription="Test EC Launch Template 1 (Secret in UserData)",
             LaunchTemplateData={
                 "InstanceType": TEMPLATE_INSTANCE_TYPE,
             },
         )
+        launch_template_id = ec2_client.describe_launch_templates()["LaunchTemplates"][
+            0
+        ]["LaunchTemplateId"]
+        # EC2 client for this test class
+        aws_provider = set_mocked_aws_provider([AWS_REGION_US_EAST_1])
+        ec2 = EC2(aws_provider)
 
-        # Create EC2 Launch Template Version API
-        ec2_client.create_launch_template_version(
-            LaunchTemplateName=TEMPLATE_NAME,
-            VersionDescription="Updated Test EC Launch Template 1",
-            LaunchTemplateData={
-                "InstanceType": TEMPLATE_INSTANCE_TYPE,
-                "UserData": b64encode(
-                    KNOWN_SECRET_USER_DATA.encode(encoding_format_utf_8)
-                ).decode(encoding_format_utf_8),
+        assert len(ec2.launch_templates) == 1
+        assert ec2.launch_templates[0].region == AWS_REGION_US_EAST_1
+        assert ec2.launch_templates[0].id == launch_template_id
+        assert len(ec2.launch_templates[0].versions) == 1
+
+        version = ec2.launch_templates[0].versions[0]
+
+        assert (
+            b64decode(version.template_data.user_data).decode(encoding_format_utf_8)
+            == "foobar123"
+        )
+
+        assert version.template_data.associate_public_ip_address
+        assert version.template_data.http_endpoint == "enabled"
+        assert version.template_data.http_tokens == "optional"
+
+    # Test EC2 Describe VPN Endpoints
+    @mock.patch("botocore.client.BaseClient._make_api_call", new=mock_make_api_call)
+    def test_describe_vpn_endpoints(self):
+        # EC2 client for this test class
+        aws_provider = set_mocked_aws_provider([AWS_REGION_US_EAST_1])
+        ec2 = EC2(aws_provider)
+
+        assert len(ec2.vpn_endpoints) == 1
+        vpn_arn = f"arn:aws:ec2:{AWS_REGION_US_EAST_1}:{AWS_ACCOUNT_NUMBER}:client-vpn-endpoint/cvpn-endpoint-1234567890abcdef0"
+        assert vpn_arn in ec2.vpn_endpoints
+        vpn_endpoint = ec2.vpn_endpoints[vpn_arn]
+        assert vpn_endpoint.id == "cvpn-endpoint-1234567890abcdef0"
+        assert vpn_endpoint.connection_logging
+        assert vpn_endpoint.region == AWS_REGION_US_EAST_1
+
+    # Test EC2 Describe Launch Templates
+    @mock_aws
+    def test_describe_transit_gateways(self):
+        # Generate EC2 Client
+        ec2_client = client("ec2", region_name=AWS_REGION_US_EAST_1)
+
+        # Create EC2 Transit Gateway API
+        response = ec2_client.create_transit_gateway(
+            Description="Test Transit Gateway",
+            Options={
+                "AmazonSideAsn": 64512,
+                "AutoAcceptSharedAttachments": "enable",
             },
+            TagSpecifications=[
+                {
+                    "ResourceType": "transit-gateway",
+                    "Tags": [{"Key": "Name", "Value": "test-tgw"}],
+                }
+            ],
         )
 
         # EC2 client for this test class
@@ -692,18 +1244,12 @@ class Test_EC2_Service:
         )
         ec2 = EC2(aws_provider)
 
-        assert len(ec2.launch_templates) == 1
-        assert ec2.launch_templates[0].name == TEMPLATE_NAME
-        assert ec2.launch_templates[0].region == AWS_REGION_US_EAST_1
+        transit_arn = response["TransitGateway"]["TransitGatewayArn"]
 
-        assert len(ec2.launch_templates[0].versions) == 2
-
-        version1, version2 = ec2.launch_templates[0].versions
-
-        assert version1.template_data["InstanceType"] == TEMPLATE_INSTANCE_TYPE
-
-        assert version2.template_data["InstanceType"] == TEMPLATE_INSTANCE_TYPE
+        assert len(ec2.transit_gateways) == 1
         assert (
-            b64decode(version2.template_data["UserData"]).decode(encoding_format_utf_8)
-            == KNOWN_SECRET_USER_DATA
+            ec2.transit_gateways[transit_arn].id
+            == response["TransitGateway"]["TransitGatewayId"]
         )
+        assert ec2.transit_gateways[transit_arn].auto_accept_shared_attachments
+        assert ec2.transit_gateways[transit_arn].region == AWS_REGION_US_EAST_1

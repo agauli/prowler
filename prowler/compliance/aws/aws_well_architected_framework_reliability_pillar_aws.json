@@ -1,5 +1,6 @@
 {
   "Framework": "AWS-Well-Architected-Framework-Reliability-Pillar",
+  "Name": "AWS Well-Architected Framework Reliability Pillar",
   "Version": "",
   "Provider": "AWS",
   "Description": "Best Practices for the AWS Well-Architected Framework Reliability Pillar encompasses the ability of a workload to perform its intended function correctly and consistently when it’s expected to. This includes the ability to operate and test the workload through its total lifecycle.",
@@ -52,7 +53,8 @@
         "opensearch_service_domains_audit_logging_enabled",
         "opensearch_service_domains_cloudwatch_logging_enabled",
         "rds_instance_enhanced_monitoring_enabled",
-        "rds_instance_integration_cloudwatch_logs"
+        "rds_instance_integration_cloudwatch_logs",
+        "ec2_confidential_workload_host_not_running"
       ]
     },
     {

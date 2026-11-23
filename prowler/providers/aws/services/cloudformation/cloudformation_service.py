@@ -1,23 +1,22 @@
-from typing import Optional
+from typing import ClassVar, Optional
 
 from botocore.client import ClientError
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
 
-################## CloudFormation
 class CloudFormation(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
         super().__init__(__class__.__name__, provider)
         self.stacks = []
-        self.__threading_call__(self.__describe_stacks__)
-        self.__describe_stack__()
+        self.__threading_call__(self._describe_stacks)
+        self._describe_stack()
 
-    def __describe_stacks__(self, regional_client):
+    def _describe_stacks(self, regional_client):
         """Get ALL CloudFormation Stacks"""
         logger.info("CloudFormation - Describing Stacks...")
         try:
@@ -47,7 +46,7 @@ class CloudFormation(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_stack__(self):
+    def _describe_stack(self):
         """Get Details for a CloudFormation Stack"""
         logger.info("CloudFormation - Describing Stack to get specific details...")
         for stack in self.stacks:
@@ -83,6 +82,7 @@ class Stack(BaseModel):
     """In the CloudFormation API the "Stacks[].StackId" is the ARN"""
     name: str
     """Stacks[].StackName"""
+    sensitive_fields: ClassVar[tuple[str, ...]] = ("outputs",)
     outputs: list[str]
     """Stacks[].Outputs"""
     enable_termination_protection: bool = False

@@ -6,12 +6,16 @@ class compute_firewall_rdp_access_from_the_internet_allowed(Check):
     def execute(self) -> Check_Report_GCP:
         findings = []
         for firewall in compute_client.firewalls:
-            report = Check_Report_GCP(self.metadata())
-            report.project_id = firewall.project_id
-            report.resource_id = firewall.id
-            report.resource_name = firewall.name
-            report.location = compute_client.region
+            report = Check_Report_GCP(
+                metadata=self.metadata(),
+                resource=firewall,
+                location=compute_client.region,
+            )
             report.status = "PASS"
+            if firewall.disabled:
+                report.status_extended = f"Firewall {firewall.name} is disabled and does not expose port 3389 (RDP) to the internet."
+                findings.append(report)
+                continue
             report.status_extended = f"Firewall {firewall.name} does not expose port 3389 (RDP) to the internet."
             opened_port = False
             for rule in firewall.allowed_rules:
@@ -31,9 +35,12 @@ class compute_firewall_rdp_access_from_the_internet_allowed(Check):
                                     break
                             elif int(port) == 3389:
                                 opened_port = True
-                            break
+                                break
             if (
-                "0.0.0.0/0" in firewall.source_ranges
+                (
+                    "0.0.0.0/0" in firewall.source_ranges
+                    or "::/0" in firewall.source_ranges
+                )
                 and firewall.direction == "INGRESS"
                 and opened_port
             ):

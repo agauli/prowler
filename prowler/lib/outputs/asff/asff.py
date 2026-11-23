@@ -2,7 +2,7 @@ from json import dump
 from os import SEEK_SET
 from typing import Optional
 
-from pydantic import BaseModel, validator
+from pydantic.v1 import BaseModel, validator
 
 from prowler.config.config import prowler_version, timestamp_utc
 from prowler.lib.logger import logger
@@ -72,28 +72,34 @@ class ASFF(Output):
                     AWSSecurityFindingFormat(
                         # The following line cannot be changed because it is the format we use to generate unique findings for AWS Security Hub
                         # If changed some findings could be lost because the unique identifier will be different
-                        Id=f"prowler-{finding.check_id}-{finding.account_uid}-{finding.region}-{hash_sha512(finding.resource_uid)}",
+                        Id=f"prowler-{finding.metadata.CheckID}-{finding.account_uid}-{finding.region}-{hash_sha512(finding.resource_uid)}",
                         ProductArn=f"arn:{finding.partition}:securityhub:{finding.region}::product/prowler/prowler",
                         ProductFields=ProductFields(
                             ProwlerResourceName=finding.resource_uid,
+                            ProwlerAccountOrganizationalUnitId=finding.account_ou_uid,
+                            ProwlerAccountOrganizationalUnitName=finding.account_ou_name,
                         ),
-                        GeneratorId="prowler-" + finding.check_id,
+                        GeneratorId="prowler-" + finding.metadata.CheckID,
                         AwsAccountId=finding.account_uid,
                         Types=(
-                            finding.check_type.split(",")
-                            if finding.check_type
+                            finding.metadata.CheckType
+                            if finding.metadata.CheckType
                             else ["Software and Configuration Checks"]
                         ),
                         FirstObservedAt=timestamp,
                         UpdatedAt=timestamp,
                         CreatedAt=timestamp,
-                        Severity=Severity(Label=finding.severity.value),
-                        Title=finding.check_title,
-                        Description=finding.description,
+                        Severity=Severity(Label=finding.metadata.Severity.value),
+                        Title=finding.metadata.CheckTitle,
+                        Description=(
+                            (finding.status_extended[:1000] + "...")
+                            if len(finding.status_extended) > 1000
+                            else finding.status_extended
+                        ),
                         Resources=[
                             Resource(
                                 Id=finding.resource_uid,
-                                Type=finding.resource_type,
+                                Type=finding.metadata.ResourceType,
                                 Partition=finding.partition,
                                 Region=finding.region,
                                 Tags=finding.resource_tags,
@@ -106,8 +112,8 @@ class ASFF(Output):
                         ),
                         Remediation=Remediation(
                             Recommendation=Recommendation(
-                                Text=finding.remediation_recommendation_text,
-                                Url=finding.remediation_recommendation_url,
+                                Text=finding.metadata.Remediation.Recommendation.Text,
+                                Url=finding.metadata.Remediation.Recommendation.Url,
                             )
                         ),
                     )
@@ -238,6 +244,8 @@ class ProductFields(BaseModel):
     ProviderName: str = "Prowler"
     ProviderVersion: str = prowler_version
     ProwlerResourceName: str
+    ProwlerAccountOrganizationalUnitId: Optional[str] = None
+    ProwlerAccountOrganizationalUnitName: Optional[str] = None
 
 
 class Severity(BaseModel):
@@ -275,7 +283,7 @@ class Resource(BaseModel):
     Id: str
     Partition: str
     Region: str
-    Tags: Optional[dict]
+    Tags: Optional[dict] = None
 
     @validator("Tags", pre=True, always=True)
     def tags_cannot_be_empty_dict(tags):

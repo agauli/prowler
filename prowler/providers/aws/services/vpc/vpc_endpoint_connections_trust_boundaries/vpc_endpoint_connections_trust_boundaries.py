@@ -1,9 +1,7 @@
 from re import compile
 
 from prowler.lib.check.models import Check, Check_Report_AWS
-from prowler.providers.aws.lib.policy_condition_parser.policy_condition_parser import (
-    is_condition_block_restrictive,
-)
+from prowler.providers.aws.services.iam.lib.policy import is_condition_block_restrictive
 from prowler.providers.aws.services.vpc.vpc_client import vpc_client
 
 
@@ -16,9 +14,12 @@ class vpc_endpoint_connections_trust_boundaries(Check):
         trusted_account_ids.append(vpc_client.audited_account)
         for endpoint in vpc_client.vpc_endpoints:
             # Check VPC endpoint policy and  avoid "com.amazonaws.vpce" endpoints since the policy cannot be modified
+            # Also avoid services where vpc endpoint policies are not supported
             if (
                 endpoint.policy_document
                 and "com.amazonaws.vpce." not in endpoint.service_name
+                and vpc_client.vpc_endpoint_policy_supported.get(endpoint.service_name)
+                is not False
             ):
                 access_from_trusted_accounts = True
                 for statement in endpoint.policy_document["Statement"]:
@@ -27,11 +28,9 @@ class vpc_endpoint_connections_trust_boundaries(Check):
                         break
                     if "*" == statement["Principal"]:
                         access_from_trusted_accounts = False
-                        report = Check_Report_AWS(self.metadata())
-                        report.region = endpoint.region
-                        report.resource_id = endpoint.id
-                        report.resource_arn = endpoint.arn
-                        report.resource_tags = endpoint.tags
+                        report = Check_Report_AWS(
+                            metadata=self.metadata(), resource=endpoint
+                        )
 
                         if "Condition" in statement:
                             for account_id in trusted_account_ids:
@@ -64,11 +63,9 @@ class vpc_endpoint_connections_trust_boundaries(Check):
                             # If the principal is not an AWS principal, we don't need to check it since it could be a service or a federated principal
                             principals = []
                         for principal_arn in principals:
-                            report = Check_Report_AWS(self.metadata())
-                            report.region = endpoint.region
-                            report.resource_id = endpoint.id
-                            report.resource_arn = endpoint.arn
-                            report.resource_tags = endpoint.tags
+                            report = Check_Report_AWS(
+                                metadata=self.metadata(), resource=endpoint
+                            )
 
                             if principal_arn == "*":
                                 access_from_trusted_accounts = False

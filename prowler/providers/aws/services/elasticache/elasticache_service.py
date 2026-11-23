@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
@@ -12,6 +12,7 @@ class ElastiCache(AWSService):
         # Call AWSService's __init__
         super().__init__(__class__.__name__, provider)
         self.clusters = {}
+        self._cluster_engine_versions = {}
         self.replication_groups = {}
         self.__threading_call__(self._describe_cache_clusters)
         self.__threading_call__(self._describe_cache_subnet_groups)
@@ -27,6 +28,10 @@ class ElastiCache(AWSService):
             ]:
                 try:
                     cluster_arn = cache_cluster["ARN"]
+                    # Replication groups need member versions even when members are filtered out.
+                    self._cluster_engine_versions[cluster_arn] = cache_cluster.get(
+                        "EngineVersion", "0.0"
+                    )
                     if not self.audit_resources or (
                         is_resource_filtered(cluster_arn, self.audit_resources)
                     ):
@@ -40,6 +45,10 @@ class ElastiCache(AWSService):
                             ),
                             auto_minor_version_upgrade=cache_cluster.get(
                                 "AutoMinorVersionUpgrade", False
+                            ),
+                            engine_version=cache_cluster.get("EngineVersion", "0.0"),
+                            auth_token_enabled=cache_cluster.get(
+                                "AuthTokenEnabled", False
                             ),
                         )
                 except Exception as error:
@@ -90,6 +99,13 @@ class ElastiCache(AWSService):
                     if not self.audit_resources or (
                         is_resource_filtered(replication_arn, self.audit_resources)
                     ):
+                        # Get first cluster version as they all have the same unless an upgrade is being made
+                        member_clusters = repl_group.get("MemberClusters", [])
+                        engine_version = "0.0"
+                        if member_clusters:
+                            cluster_arn = f"arn:{self.audited_partition}:elasticache:{regional_client.region}:{self.audited_account}:cluster:{member_clusters[0]}"
+                            engine_version = self._cluster_engine_versions[cluster_arn]
+
                         self.replication_groups[replication_arn] = ReplicationGroup(
                             id=repl_group["ReplicationGroupId"],
                             arn=replication_arn,
@@ -106,6 +122,13 @@ class ElastiCache(AWSService):
                             auto_minor_version_upgrade=repl_group.get(
                                 "AutoMinorVersionUpgrade", False
                             ),
+                            automatic_failover=repl_group.get(
+                                "AutomaticFailover", "disabled"
+                            ),
+                            auth_token_enabled=repl_group.get(
+                                "AuthTokenEnabled", False
+                            ),
+                            engine_version=engine_version,
                         )
                 except Exception as error:
                     logger.error(
@@ -129,6 +152,12 @@ class ElastiCache(AWSService):
                     logger.warning(
                         f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                     )
+                except (
+                    regional_client.exceptions.InvalidReplicationGroupStateFault
+                ) as error:
+                    logger.warning(
+                        f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                    )
                 except Exception as error:
                     logger.error(
                         f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
@@ -141,6 +170,12 @@ class ElastiCache(AWSService):
                     )["TagList"]
                 except (
                     regional_client.exceptions.ReplicationGroupNotFoundFault
+                ) as error:
+                    logger.warning(
+                        f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                    )
+                except (
+                    regional_client.exceptions.InvalidReplicationGroupStateFault
                 ) as error:
                     logger.warning(
                         f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
@@ -164,6 +199,8 @@ class Cluster(BaseModel):
     subnets: list = []
     tags: Optional[list]
     auto_minor_version_upgrade: bool = False
+    engine_version: Optional[str]
+    auth_token_enabled: Optional[bool]
 
 
 class ReplicationGroup(BaseModel):
@@ -176,4 +213,7 @@ class ReplicationGroup(BaseModel):
     transit_encryption: bool
     multi_az: str
     tags: Optional[list]
-    auto_minor_version_upgrade: bool = False
+    auth_token_enabled: bool
+    auto_minor_version_upgrade: bool
+    automatic_failover: str
+    engine_version: str

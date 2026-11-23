@@ -2,7 +2,11 @@ from unittest import mock
 from uuid import uuid4
 
 from prowler.providers.aws.services.sagemaker.sagemaker_service import Model
-from tests.providers.aws.utils import AWS_ACCOUNT_NUMBER, AWS_REGION_EU_WEST_1
+from tests.providers.aws.utils import (
+    AWS_ACCOUNT_NUMBER,
+    AWS_REGION_EU_WEST_1,
+    set_mocked_aws_provider,
+)
 
 test_notebook_instance = "test-notebook-instance"
 notebook_instance_arn = f"arn:aws:sagemaker:{AWS_REGION_EU_WEST_1}:{AWS_ACCOUNT_NUMBER}:notebook-instance/{test_notebook_instance}"
@@ -13,9 +17,18 @@ class Test_sagemaker_models_network_isolation_enabled:
     def test_no_models(self):
         sagemaker_client = mock.MagicMock
         sagemaker_client.sagemaker_models = []
-        with mock.patch(
-            "prowler.providers.aws.services.sagemaker.sagemaker_service.SageMaker",
-            sagemaker_client,
+
+        aws_provider = set_mocked_aws_provider([AWS_REGION_EU_WEST_1])
+
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.sagemaker.sagemaker_models_network_isolation_enabled.sagemaker_models_network_isolation_enabled.sagemaker_client",
+                sagemaker_client,
+            ),
         ):
             from prowler.providers.aws.services.sagemaker.sagemaker_models_network_isolation_enabled.sagemaker_models_network_isolation_enabled import (
                 sagemaker_models_network_isolation_enabled,
@@ -36,9 +49,18 @@ class Test_sagemaker_models_network_isolation_enabled:
                 network_isolation=True,
             )
         )
-        with mock.patch(
-            "prowler.providers.aws.services.sagemaker.sagemaker_service.SageMaker",
-            sagemaker_client,
+
+        aws_provider = set_mocked_aws_provider([AWS_REGION_EU_WEST_1])
+
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.sagemaker.sagemaker_models_network_isolation_enabled.sagemaker_models_network_isolation_enabled.sagemaker_client",
+                sagemaker_client,
+            ),
         ):
             from prowler.providers.aws.services.sagemaker.sagemaker_models_network_isolation_enabled.sagemaker_models_network_isolation_enabled import (
                 sagemaker_models_network_isolation_enabled,
@@ -66,9 +88,18 @@ class Test_sagemaker_models_network_isolation_enabled:
                 network_isolation=False,
             )
         )
-        with mock.patch(
-            "prowler.providers.aws.services.sagemaker.sagemaker_service.SageMaker",
-            sagemaker_client,
+
+        aws_provider = set_mocked_aws_provider([AWS_REGION_EU_WEST_1])
+
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.sagemaker.sagemaker_models_network_isolation_enabled.sagemaker_models_network_isolation_enabled.sagemaker_client",
+                sagemaker_client,
+            ),
         ):
             from prowler.providers.aws.services.sagemaker.sagemaker_models_network_isolation_enabled.sagemaker_models_network_isolation_enabled import (
                 sagemaker_models_network_isolation_enabled,

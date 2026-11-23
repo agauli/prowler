@@ -1,6 +1,7 @@
 from unittest import mock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import pytest
 from azure.mgmt.monitor.models import AlertRuleAnyOfOrLeafCondition
 
 from prowler.providers.azure.services.monitor.lib.monitor_alerts import check_alert_rule
@@ -40,11 +41,11 @@ def mock_monitor_get_diagnostics_settings(_):
 
 
 @patch(
-    "prowler.providers.azure.services.monitor.monitor_service.Monitor.__get_diagnostics_settings__",
+    "prowler.providers.azure.services.monitor.monitor_service.Monitor._get_diagnostics_settings",
     new=mock_monitor_get_diagnostics_settings,
 )
 class Test_Monitor_Service:
-    def test__get_client__(self):
+    def test_get_client(self):
         monitor = Monitor(set_mocked_azure_provider())
         assert (
             monitor.clients[AZURE_SUBSCRIPTION_ID].__class__.__name__
@@ -111,6 +112,27 @@ class Test_Monitor_Service:
             monitor.diagnostics_settings[AZURE_SUBSCRIPTION_ID][0].storage_account_id
             == "/subscriptions/1234a5-123a-123a-123a-1234567890ab/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/storageaccountname"
         )
+
+    def test_diagnostic_settings_with_uri_error_returns_empty_by_default(self):
+        monitor = Monitor(set_mocked_azure_provider())
+        client = MagicMock()
+        client.diagnostic_settings.list.side_effect = Exception("boom")
+
+        result = monitor.diagnostic_settings_with_uri(
+            AZURE_SUBSCRIPTION_ID, "uri", client
+        )
+
+        assert result == []
+
+    def test_diagnostic_settings_with_uri_error_raises_when_requested(self):
+        monitor = Monitor(set_mocked_azure_provider())
+        client = MagicMock()
+        client.diagnostic_settings.list.side_effect = Exception("boom")
+
+        with pytest.raises(Exception, match="boom"):
+            monitor.diagnostic_settings_with_uri(
+                AZURE_SUBSCRIPTION_ID, "uri", client, raise_errors=True
+            )
 
     def test__monitor_alerts_false__(self):
         alert_rule = AlertRule(

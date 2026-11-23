@@ -1,11 +1,7 @@
 from argparse import ArgumentTypeError, Namespace
-from re import search
+from re import fullmatch, search
 
-from prowler.providers.aws.aws_provider import (
-    get_aws_available_regions,
-    validate_role_session_name,
-    validate_session_duration,
-)
+from prowler.providers.aws.aws_provider import AwsProvider
 from prowler.providers.aws.config import ROLE_SESSION_NAME
 from prowler.providers.aws.lib.arn.arn import arn_type
 
@@ -68,7 +64,17 @@ def init_parser(self):
         "-f",
         nargs="+",
         help="AWS region names to run Prowler against",
-        choices=get_aws_available_regions(),
+        choices=AwsProvider.get_regions(partition=None),
+    )
+    aws_regions_subparser.add_argument(
+        "--excluded-region",
+        "--excluded-regions",
+        nargs="+",
+        help=(
+            "AWS region names to exclude from the scan. Overrides the "
+            "PROWLER_AWS_DISALLOWED_REGIONS environment variable when set."
+        ),
+        choices=AwsProvider.get_regions(partition=None),
     )
     # AWS Organizations
     aws_orgs_subparser = aws_parser.add_argument_group("AWS Organizations")
@@ -84,7 +90,7 @@ def init_parser(self):
         "--security-hub",
         "-S",
         action="store_true",
-        help="Send check output to AWS Security Hub and save json-asff outuput.",
+        help="Send check output to AWS Security Hub and save json-asff output.",
     )
     aws_security_hub_subparser.add_argument(
         "--skip-sh-update",
@@ -150,7 +156,21 @@ def init_parser(self):
         nargs="?",
         default=None,
         type=int,
-        help="Set the maximum attemps for the Boto3 standard retrier config (Default: 3)",
+        help="Set the maximum retries for the Boto3 standard retrier config, 0 disables retries (Default: 3)",
+    )
+    boto3_config_subparser.add_argument(
+        "--aws-connect-timeout",
+        nargs="?",
+        default=None,
+        type=validate_timeout,
+        help="Seconds to wait to establish a connection (TCP, proxy tunnel and TLS) to an AWS endpoint before retrying (Default: 10)",
+    )
+    boto3_config_subparser.add_argument(
+        "--aws-read-timeout",
+        nargs="?",
+        default=None,
+        type=validate_timeout,
+        help="Seconds to wait for a response from an AWS endpoint before retrying (Default: 60)",
     )
 
     # Scan Unused Services
@@ -172,6 +192,49 @@ def init_parser(self):
     )
 
 
+def validate_session_duration(session_duration: int) -> int:
+    """validate_session_duration validates that the input session_duration is valid"""
+    duration = int(session_duration)
+    # Since the range(i,j) goes from i to j-1 we have to j+1
+    if duration not in range(900, 43201):
+        raise ArgumentTypeError(
+            "Session duration must be between 900 and 43200 seconds"
+        )
+    else:
+        return duration
+
+
+def validate_timeout(value: str) -> int:
+    """validate_timeout validates that the input is a whole number of seconds greater than zero"""
+    if not value.isdecimal() or int(value) == 0:
+        raise ArgumentTypeError(f"{value} is not a positive integer")
+    return int(value)
+
+
+def validate_role_session_name(session_name) -> str:
+    """
+    Validates that the role session name is valid.
+
+    Args:
+        session_name (str): The role session name to be validated.
+
+    Returns:
+        str: The validated role session name.
+
+    Raises:
+        ArgumentTypeError: If the role session name is invalid.
+
+    Documentation:
+        - AWS STS AssumeRole API: https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html
+    """
+    if fullmatch(r"[\w+=,.@-]{2,64}", session_name):
+        return session_name
+    else:
+        raise ArgumentTypeError(
+            "Role session name must be between 2 and 64 characters long and may contain alphanumeric characters, hyphens, underscores, plus signs, equal signs, commas, periods, at signs, and tildes."
+        )
+
+
 def validate_arguments(arguments: Namespace) -> tuple[bool, str]:
     """validate_arguments returns {True, "} if the provider arguments passed are valid and can be used together. It performs an extra validation, specific for the AWS provider, apart from the argparse lib."""
 
@@ -190,9 +253,12 @@ def validate_arguments(arguments: Namespace) -> tuple[bool, str]:
     return (True, "")
 
 
-def validate_bucket(bucket_name):
+def validate_bucket(bucket_name: str) -> str:
     """validate_bucket validates that the input bucket_name is valid"""
-    if search("(?!(^xn--|.+-s3alias$))^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", bucket_name):
+    if search(
+        r"^(?!^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$)(?!.*\.{2})(?!.*\.-)(?!.*-\.)(?!^xn--)(?!^sthree-)(?!^amzn-s3-demo-)(?!.*--table-s3$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+        bucket_name,
+    ):
         return bucket_name
     else:
         raise ArgumentTypeError(

@@ -1,4 +1,3 @@
-from re import search
 from unittest import mock
 
 from prowler.providers.aws.services.codebuild.codebuild_service import Project
@@ -19,11 +18,18 @@ class Test_codebuild_project_user_controlled_buildspec:
                 region="eu-west-1",
                 last_invoked_time=None,
                 buildspec=None,
+                tags=[],
             )
         }
-        with mock.patch(
-            "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
-            codebuild_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
+                codebuild_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_project_user_controlled_buildspec.codebuild_project_user_controlled_buildspec.codebuild_client",
+                codebuild_client,
+            ),
         ):
             from prowler.providers.aws.services.codebuild.codebuild_project_user_controlled_buildspec.codebuild_project_user_controlled_buildspec import (
                 codebuild_project_user_controlled_buildspec,
@@ -34,9 +40,9 @@ class Test_codebuild_project_user_controlled_buildspec:
 
             assert len(result) == 1
             assert result[0].status == "PASS"
-            assert search(
-                "does not use an user controlled buildspec",
-                result[0].status_extended,
+            assert (
+                result[0].status_extended
+                == f"CodeBuild project {project_name} does not use an user controlled buildspec."
             )
             assert result[0].resource_id == project_name
             assert result[0].resource_arn == project_arn
@@ -54,12 +60,19 @@ class Test_codebuild_project_user_controlled_buildspec:
                 region="eu-west-1",
                 last_invoked_time=None,
                 buildspec="arn:aws:s3:::my-codebuild-sample2/buildspec.out",
+                tags=[],
             )
         }
 
-        with mock.patch(
-            "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
-            codebuild_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
+                codebuild_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_project_user_controlled_buildspec.codebuild_project_user_controlled_buildspec.codebuild_client",
+                codebuild_client,
+            ),
         ):
             from prowler.providers.aws.services.codebuild.codebuild_project_user_controlled_buildspec.codebuild_project_user_controlled_buildspec import (
                 codebuild_project_user_controlled_buildspec,
@@ -70,9 +83,9 @@ class Test_codebuild_project_user_controlled_buildspec:
 
             assert len(result) == 1
             assert result[0].status == "PASS"
-            assert search(
-                "does not use an user controlled buildspec",
-                result[0].status_extended,
+            assert (
+                result[0].status_extended
+                == f"CodeBuild project {project_name} does not use an user controlled buildspec."
             )
             assert result[0].resource_id == project_name
             assert result[0].resource_arn == project_arn
@@ -90,11 +103,18 @@ class Test_codebuild_project_user_controlled_buildspec:
                 region="eu-west-1",
                 last_invoked_time=None,
                 buildspec="arn:aws:s3:::my-codebuild-sample2/buildspec.yaml",
+                tags=[],
             )
         }
-        with mock.patch(
-            "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
-            codebuild_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
+                codebuild_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_project_user_controlled_buildspec.codebuild_project_user_controlled_buildspec.codebuild_client",
+                codebuild_client,
+            ),
         ):
             from prowler.providers.aws.services.codebuild.codebuild_project_user_controlled_buildspec.codebuild_project_user_controlled_buildspec import (
                 codebuild_project_user_controlled_buildspec,
@@ -105,8 +125,9 @@ class Test_codebuild_project_user_controlled_buildspec:
 
             assert len(result) == 1
             assert result[0].status == "FAIL"
-            assert search(
-                "uses an user controlled buildspec", result[0].status_extended
+            assert (
+                result[0].status_extended
+                == f"CodeBuild project {project_name} uses an user controlled buildspec."
             )
             assert result[0].resource_id == project_name
             assert result[0].resource_arn == project_arn
@@ -124,11 +145,18 @@ class Test_codebuild_project_user_controlled_buildspec:
                 region="eu-west-1",
                 last_invoked_time=None,
                 buildspec="arn:aws:s3:::my-codebuild-sample2/buildspecyaml",
+                tags=[],
             )
         }
-        with mock.patch(
-            "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
-            codebuild_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
+                codebuild_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_project_user_controlled_buildspec.codebuild_project_user_controlled_buildspec.codebuild_client",
+                codebuild_client,
+            ),
         ):
             from prowler.providers.aws.services.codebuild.codebuild_project_user_controlled_buildspec.codebuild_project_user_controlled_buildspec import (
                 codebuild_project_user_controlled_buildspec,
@@ -139,9 +167,9 @@ class Test_codebuild_project_user_controlled_buildspec:
 
             assert len(result) == 1
             assert result[0].status == "PASS"
-            assert search(
-                "does not use an user controlled buildspec",
-                result[0].status_extended,
+            assert (
+                result[0].status_extended
+                == f"CodeBuild project {project_name} does not use an user controlled buildspec."
             )
             assert result[0].resource_id == project_name
             assert result[0].resource_arn == project_arn

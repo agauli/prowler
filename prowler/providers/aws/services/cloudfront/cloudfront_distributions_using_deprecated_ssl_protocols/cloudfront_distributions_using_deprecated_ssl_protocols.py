@@ -11,20 +11,14 @@ class cloudfront_distributions_using_deprecated_ssl_protocols(Check):
     def execute(self):
         findings = []
         for distribution in cloudfront_client.distributions.values():
-            report = Check_Report_AWS(self.metadata())
-            report.region = distribution.region
-            report.resource_arn = distribution.arn
-            report.resource_id = distribution.id
-            report.resource_tags = distribution.tags
+            report = Check_Report_AWS(metadata=self.metadata(), resource=distribution)
             report.status = "PASS"
             report.status_extended = f"CloudFront Distribution {distribution.id} is not using a deprecated SSL protocol."
 
             bad_ssl_protocol = False
             for origin in distribution.origins:
-                if "CustomOriginConfig" in origin:
-                    for ssl_protocol in origin["CustomOriginConfig"][
-                        "OriginSslProtocols"
-                    ]["Items"]:
+                if origin.origin_ssl_protocols:
+                    for ssl_protocol in origin.origin_ssl_protocols:
                         if ssl_protocol in (
                             OriginsSSLProtocols.SSLv3.value,
                             OriginsSSLProtocols.TLSv1.value,
@@ -32,6 +26,7 @@ class cloudfront_distributions_using_deprecated_ssl_protocols(Check):
                         ):
                             bad_ssl_protocol = True
                             break
+
                 if bad_ssl_protocol:
                     report.status = "FAIL"
                     report.status_extended = f"CloudFront Distribution {distribution.id} is using a deprecated SSL protocol."

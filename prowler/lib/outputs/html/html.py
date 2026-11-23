@@ -1,6 +1,10 @@
-import html
+import re
 import sys
 from io import TextIOWrapper
+from urllib.parse import urlparse
+
+import markdown
+from markupsafe import escape
 
 from prowler.config.config import (
     html_logo_url,
@@ -8,13 +12,140 @@ from prowler.config.config import (
     square_logo_img,
     timestamp,
 )
+from prowler.lib.cli.redact import redact_argv
 from prowler.lib.logger import logger
 from prowler.lib.outputs.output import Finding, Output
 from prowler.lib.outputs.utils import parse_html_string, unroll_dict
 from prowler.providers.common.provider import Provider
 
+_SAFE_URL_SCHEMES = {"http", "https"}
+
+# Prowler Cloud hand-off block. Only the OSS CLI opts in (see `show_cloud_cta`),
+# so Prowler Cloud and Private Cloud reports never contain it. These URLs are
+# static: no assessment data is ever appended to them.
+PROWLER_CLOUD_CTA_URL = (
+    "https://cloud.prowler.com/sign-up"
+    "?utm_source=prowler-html-report&utm_medium=oss&utm_campaign=report-handoff"
+)
+PROWLER_CLOUD_PRICING_URL = "https://prowler.com/pricing"
+PROWLER_CLOUD_IMPORT_DOCS_URL = (
+    "https://docs.prowler.com/user-guide/tutorials/prowler-import-findings"
+)
+
+
+def _safe_url(url: str) -> str:
+    """Return url if its scheme is http/https, otherwise return empty string."""
+    if not url:
+        return ""
+    scheme = urlparse(url).scheme.lower()
+    return url if scheme in _SAFE_URL_SCHEMES else ""
+
+
+def _strip_unsafe_links(html_content: str) -> str:
+    """Replace <a href> tags whose href is not http/https with their link text."""
+
+    def _replace(match: re.Match) -> str:
+        href = match.group("href")
+        body = match.group("body")
+        safe = _safe_url(href)
+        return f'<a href="{safe}">{body}</a>' if safe else body
+
+    return re.sub(
+        r'<a\s[^>]*href="(?P<href>[^"]*)"[^>]*>(?P<body>.*?)</a>',
+        _replace,
+        html_content,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
 
 class HTML(Output):
+    def __init__(
+        self,
+        findings: list[Finding],
+        file_path: str = None,
+        file_extension: str = "",
+        from_cli: bool = True,
+        show_cloud_cta: bool = False,
+    ) -> None:
+        """
+        Initializes the HTML output.
+
+        Args:
+            findings (list[Finding]): findings to transform
+            file_path (str): path of the output file
+            file_extension (str): extension of the output file
+            from_cli (bool): whether the output is written in one go (CLI) or in batches (API)
+            show_cloud_cta (bool): whether to render the Prowler Cloud hand-off block after the
+                assessment summary. Disabled by default; only the OSS CLI enables it.
+        """
+        self._show_cloud_cta = show_cloud_cta
+        super().__init__(
+            findings,
+            file_path=file_path,
+            file_extension=file_extension,
+            from_cli=from_cli,
+        )
+
+    @staticmethod
+    def get_cloud_cta() -> str:
+        """
+        Returns the Prowler Cloud hand-off block shown after the assessment summary in OSS CLI
+        reports. It is static markup: no scripts, no requests, and no assessment data in URLs.
+
+        Returns:
+            str: HTML markup of the block
+        """
+        return f"""
+        <div class="row mt-3 prowler-cloud-cta" role="complementary" aria-labelledby="prowler-cloud-cta-title">
+        <div class="col-md-12">
+            <div class="card">
+            <div class="card-body">
+                <h5 class="card-title" id="prowler-cloud-cta-title">Keep scanning locally. Bring your findings to Prowler Cloud.</h5>
+                <p class="card-text">Import your accompanying OCSF report to explore managed security workflows. <a href="{PROWLER_CLOUD_IMPORT_DOCS_URL}" target="_blank" rel="noopener noreferrer">How to import findings</a></p>
+                <a class="btn btn-primary" href="{PROWLER_CLOUD_CTA_URL}" target="_blank" rel="noopener noreferrer">Explore Prowler Cloud</a>
+                <a class="btn btn-link" href="{PROWLER_CLOUD_PRICING_URL}" target="_blank" rel="noopener noreferrer">Compare editions</a>
+                <p class="card-text text-muted mt-2 mb-0"><small>Nothing is uploaded automatically.</small></p>
+            </div>
+            </div>
+        </div>
+        </div>"""
+
+    @staticmethod
+    def process_markdown(text: str) -> str:
+        """
+        Process markdown syntax in text and convert to HTML using the markdown library.
+
+        Args:
+            text (str): Text containing markdown syntax
+
+        Returns:
+            str: HTML with markdown syntax converted
+        """
+        if not text:
+            return text
+
+        # Initialize markdown converter with safe mode to prevent XSS
+        md = markdown.Markdown(extensions=["nl2br"])
+
+        # Convert markdown to HTML
+        html_content = md.convert(text)
+
+        # Strip outer <p> tags if present, as we're embedding in existing HTML
+        # Handle single paragraph case
+        if (
+            html_content.startswith("<p>")
+            and html_content.endswith("</p>")
+            and html_content.count("<p>") == 1
+        ):
+            html_content = html_content[3:-4]
+        # Handle multiple paragraphs case - replace <p> and </p> with <br><br>
+        elif "<p>" in html_content and "</p>" in html_content:
+            html_content = html_content.replace("</p>\n<p>", "<br />\n<br />\n")
+            html_content = html_content.replace("<p>", "")
+            html_content = html_content.replace("</p>", "")
+
+        return _strip_unsafe_links(html_content)
+
     def transform(self, findings: list[Finding]) -> None:
         """Transforms the findings into the HTML format.
 
@@ -35,24 +166,22 @@ class HTML(Output):
                 elif finding.status == "FAIL":
                     row_class = "table-danger"
 
-                self._data.append(
-                    f"""
+                self._data.append(f"""
                         <tr class="{row_class}">
                             <td>{finding_status}</td>
-                            <td>{finding.severity.value}</td>
-                            <td>{finding.service_name}</td>
-                            <td>{finding.region.lower()}</td>
-                            <td>{finding.check_id.replace("_", "<wbr />_")}</td>
-                            <td>{finding.check_title}</td>
-                            <td>{finding.resource_uid.replace("<", "&lt;").replace(">", "&gt;").replace("_", "<wbr />_")}</td>
-                            <td>{parse_html_string(unroll_dict(finding.resource_tags))}</td>
-                            <td>{finding.status_extended.replace("<", "&lt;").replace(">", "&gt;").replace("_", "<wbr />_")}</td>
-                            <td><p class="show-read-more">{html.escape(finding.risk)}</p></td>
-                            <td><p class="show-read-more">{html.escape(finding.remediation_recommendation_text)}</p> <a class="read-more" href="{finding.remediation_recommendation_url}"><i class="fas fa-external-link-alt"></i></a></td>
-                            <td><p class="show-read-more">{parse_html_string(unroll_dict(finding.compliance, separator=": "))}</p></td>
+                            <td>{str(escape(finding.metadata.Severity.value))}</td>
+                            <td>{str(escape(finding.metadata.ServiceName))}</td>
+                            <td>{str(escape(finding.region.lower()))}</td>
+                            <td>{str(escape(finding.metadata.CheckID)).replace("_", "<wbr />_")}</td>
+                            <td>{str(escape(finding.metadata.CheckTitle))}</td>
+                            <td>{str(escape(finding.resource_uid)).replace("_", "<wbr />_")}</td>
+                            <td>{parse_html_string(str(escape(unroll_dict(finding.resource_tags))))}</td>
+                            <td>{str(escape(finding.status_extended)).replace("_", "<wbr />_")}</td>
+                            <td><p class="show-read-more">{HTML.process_markdown(str(escape(finding.metadata.Risk)))}</p></td>
+                            <td><p class="show-read-more">{HTML.process_markdown(str(escape(finding.metadata.Remediation.Recommendation.Text)))}</p> <a class="read-more" href="{str(escape(_safe_url(finding.metadata.Remediation.Recommendation.Url)))}"><i class="fas fa-external-link-alt"></i></a></td>
+                            <td><p class="show-read-more">{parse_html_string(str(escape(unroll_dict(finding.compliance, separator=": "))))}</p></td>
                         </tr>
-                        """
-                )
+                        """)
         except Exception as error:
             logger.error(
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
@@ -72,14 +201,21 @@ class HTML(Output):
             if (
                 getattr(self, "_file_descriptor", None)
                 and not self._file_descriptor.closed
-                and self._data
             ):
-                HTML.write_header(self._file_descriptor, provider, stats)
+                if self._data and self._file_descriptor.tell() == 0:
+                    HTML.write_header(
+                        self._file_descriptor,
+                        provider,
+                        stats,
+                        self._from_cli,
+                        show_cloud_cta=getattr(self, "_show_cloud_cta", False),
+                    )
                 for finding in self._data:
                     self._file_descriptor.write(finding)
-                HTML.write_footer(self._file_descriptor)
-                # Close file descriptor
-                self._file_descriptor.close()
+                if self.close_file or self._from_cli:
+                    if self._file_descriptor.tell() > 0:
+                        HTML.write_footer(self._file_descriptor)
+                    self._file_descriptor.close()
         except Exception as error:
             logger.error(
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
@@ -87,7 +223,11 @@ class HTML(Output):
 
     @staticmethod
     def write_header(
-        file_descriptor: TextIOWrapper, provider: Provider, stats: dict
+        file_descriptor: TextIOWrapper,
+        provider: Provider,
+        stats: dict,
+        from_cli: bool = True,
+        show_cloud_cta: bool = False,
     ) -> None:
         """
         Writes the header of the HTML file.
@@ -96,11 +236,19 @@ class HTML(Output):
             file_descriptor (file): the file descriptor to write the header
             provider (Provider): the provider object
             stats (dict): the statistics of the findings
+            from_cli (bool): whether the request is from the CLI or not
+            show_cloud_cta (bool): whether to include the Prowler Cloud hand-off block. When
+                False the block, its styles and its URLs are omitted entirely.
         """
         try:
-            file_descriptor.write(
-                f"""
-<!DOCTYPE html>
+            cloud_cta_style = (
+                """
+        @media print { .prowler-cloud-cta { display: none !important; } }"""
+                if show_cloud_cta
+                else ""
+            )
+            cloud_cta = HTML.get_cloud_cta() if show_cloud_cta else ""
+            file_descriptor.write(f"""<!DOCTYPE html>
     <html lang="en">
     <head>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
@@ -128,7 +276,7 @@ class HTML(Output):
 
         .container-fluid {{font-size: 14px;}}
 
-        .float-left {{ float: left !important; max-width: 100%; }}
+        .float-left {{ float: left !important; max-width: 100%; }}{cloud_cta_style}
     </style>
     <title>Prowler - The Handy Cloud Security Tool</title>
     </head>
@@ -153,7 +301,7 @@ class HTML(Output):
                 </div>
                 </li>
                 <li class="list-group-item">
-                <b>Parameters used:</b> {" ".join(sys.argv[1:])}
+                <b>Parameters used:</b> {redact_argv(sys.argv[1:]) if from_cli else ""}
                 </li>
                 <li class="list-group-item">
                 <b>Date:</b> {timestamp.isoformat()}
@@ -174,7 +322,13 @@ class HTML(Output):
                         <b>Passed:</b> {str(stats.get("total_pass", 0))}
                     </li>
                     <li class="list-group-item">
+                        <b>Passed (Muted):</b> {str(stats.get("total_muted_pass", 0))}
+                    </li>
+                    <li class="list-group-item">
                         <b>Failed:</b> {str(stats.get("total_fail", 0))}
+                    </li>
+                    <li class="list-group-item">
+                        <b>Failed (Muted):</b> {str(stats.get("total_muted_fail", 0))}
                     </li>
                     <li class="list-group-item">
                         <b>Total Resources:</b> {str(stats.get("resources_count", 0))}
@@ -182,7 +336,7 @@ class HTML(Output):
                 </ul>
             </div>
         </div>
-        </div>
+        </div>{cloud_cta}
         </div>
         <div class="row-mt-3">
         <div class="col-md-12">
@@ -199,12 +353,11 @@ class HTML(Output):
                     <th scope="col">Resource Tags</th>
                     <th scope="col">Status Extended</th>
                     <th scope="col">Risk</th>
-                    <th scope="col">Recomendation</th>
+                    <th scope="col">Recommendation</th>
                     <th scope="col">Compliance</th>
                 </tr>
             </thead>
-            <tbody>"""
-            )
+            <tbody>""")
         except Exception as error:
             logger.error(
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
@@ -219,8 +372,7 @@ class HTML(Output):
             file_descriptor (file): the file descriptor to write the footer
         """
         try:
-            file_descriptor.write(
-                """
+            file_descriptor.write("""
             </tbody>
             </table>
         </div>
@@ -283,10 +435,68 @@ class HTML(Output):
             var maxLength = 30;
             // ReadMore ReadLess
             $(".show-read-more").each(function () {
-                var myStr = $(this).text();
-                if ($.trim(myStr).length > maxLength) {
-                    var newStr = myStr.substring(0, maxLength);
-                    var removedStr = myStr.substring(maxLength, $.trim(myStr).length);
+                var myStr = $(this).html();
+                var textLength = $(this).text().length;
+                if (textLength > maxLength) {
+                    // Find the position where to cut while preserving HTML tags and breaking at word boundaries
+                    var cutPosition = 0;
+                    var currentLength = 0;
+                    var inTag = false;
+                    var lastWordBoundary = 0;
+                    var tagStack = [];
+
+                    for (var i = 0; i < myStr.length; i++) {
+                        if (myStr[i] === '<') {
+                            inTag = true;
+                            // Track opening tags
+                            if (myStr[i + 1] !== '/') {
+                                var tagEnd = myStr.indexOf('>', i);
+                                if (tagEnd !== -1) {
+                                    var tagName = myStr.substring(i + 1, tagEnd).split(' ')[0];
+                                    tagStack.push(tagName);
+                                }
+                            } else {
+                                // Closing tag
+                                var tagEnd = myStr.indexOf('>', i);
+                                if (tagEnd !== -1) {
+                                    var tagName = myStr.substring(i + 2, tagEnd).split(' ')[0];
+                                    if (tagStack.length > 0) {
+                                        tagStack.pop();
+                                    }
+                                }
+                            }
+                        } else if (myStr[i] === '>') {
+                            inTag = false;
+                        } else if (!inTag) {
+                            currentLength++;
+                            // Only consider word boundaries if we're not inside any HTML tags
+                            if (tagStack.length === 0 && (myStr[i] === ' ' || myStr[i] === '.' || myStr[i] === ',' || myStr[i] === ';' || myStr[i] === ':' || myStr[i] === '!' || myStr[i] === '?')) {
+                                lastWordBoundary = i + 1;
+                            }
+
+                            if (currentLength >= maxLength) {
+                                // If we're inside HTML tags, find the next closing tag
+                                if (tagStack.length > 0) {
+                                    // Find the next closing tag for the current open tag
+                                    var nextClosingTag = '</' + tagStack[tagStack.length - 1] + '>';
+                                    var closingTagPos = myStr.indexOf(nextClosingTag, i);
+                                    if (closingTagPos !== -1) {
+                                        cutPosition = closingTagPos + nextClosingTag.length;
+                                    } else {
+                                        // If no closing tag found, use current position
+                                        cutPosition = i + 1;
+                                    }
+                                } else {
+                                    // Use the last word boundary if available, otherwise use current position
+                                    cutPosition = lastWordBoundary > 0 ? lastWordBoundary : i + 1;
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    var newStr = myStr.substring(0, cutPosition);
+                    var removedStr = myStr.substring(cutPosition);
                     $(this).empty().html(newStr);
                     $(this).append(' <a href="javascript:void(0);" class="read-more">read more...</a>');
                     $(this).append('<span class="more-text">' + removedStr + '</span>');
@@ -301,8 +511,7 @@ class HTML(Output):
 </body>
 
 </html>
-"""
-            )
+""")
         except Exception as error:
             logger.error(
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
@@ -331,6 +540,11 @@ class HTML(Output):
                 audited_regions = "All Regions"
             else:
                 audited_regions = ", ".join(provider.identity.audited_regions)
+            account = escape(str(provider.identity.account))
+            profile = escape(str(profile))
+            audited_regions = escape(str(audited_regions))
+            user_id = escape(str(provider.identity.user_id))
+            identity_arn = escape(str(provider.identity.identity_arn))
             return f"""
                 <div class="col-md-2">
                     <div class="card">
@@ -339,7 +553,7 @@ class HTML(Output):
                         </div>
                         <ul class="list-group list-group-flush">
                             <li class="list-group-item">
-                                <b>AWS Account:</b> {provider.identity.account}
+                                <b>AWS Account:</b> {account}
                             </li>
                             <li class="list-group-item">
                                 <b>AWS-CLI Profile:</b> {profile}
@@ -357,10 +571,10 @@ class HTML(Output):
                     </div>
                     <ul class="list-group list-group-flush">
                         <li class="list-group-item">
-                            <b>User Id:</b> {provider.identity.user_id}
+                            <b>User Id:</b> {user_id}
                             </li>
                             <li class="list-group-item">
-                                <b>Caller Identity ARN:</b> {provider.identity.identity_arn}
+                                <b>Caller Identity ARN:</b> {identity_arn}
                             </li>
                         </ul>
                     </div>
@@ -384,8 +598,11 @@ class HTML(Output):
         """
         try:
             printed_subscriptions = []
-            for key, value in provider.identity.subscriptions.items():
-                intermediate = f"{key} : {value}"
+            for (
+                subscription_id,
+                display_name,
+            ) in provider.identity.subscriptions.items():
+                intermediate = f"{display_name} : {subscription_id}"
                 printed_subscriptions.append(intermediate)
 
             # check if identity is str(coming from SP) or dict(coming from browser or)
@@ -395,6 +612,11 @@ class HTML(Output):
                 )
             else:
                 html_identity = provider.identity.identity_id
+            tenant_ids = escape(" ".join(provider.identity.tenant_ids))
+            tenant_domain = escape(str(provider.identity.tenant_domain))
+            subscriptions = escape(" ".join(printed_subscriptions))
+            identity_type = escape(str(provider.identity.identity_type))
+            html_identity = escape(str(html_identity))
             return f"""
                 <div class="col-md-2">
                     <div class="card">
@@ -403,13 +625,13 @@ class HTML(Output):
                         </div>
                         <ul class="list-group list-group-flush">
                             <li class="list-group-item">
-                                <b>Azure Tenant IDs:</b> {" ".join(provider.identity.tenant_ids)}
+                                <b>Azure Tenant IDs:</b> {tenant_ids}
                             </li>
                             <li class="list-group-item">
-                                <b>Azure Tenant Domain:</b> {provider.identity.tenant_domain}
+                                <b>Azure Tenant Domain:</b> {tenant_domain}
                             </li>
                             <li class="list-group-item">
-                                <b>Azure Subscriptions:</b> {" ".join(printed_subscriptions)}
+                                <b>Azure Subscriptions:</b> {subscriptions}
                             </li>
                         </ul>
                     </div>
@@ -421,7 +643,7 @@ class HTML(Output):
                     </div>
                     <ul class="list-group list-group-flush">
                         <li class="list-group-item">
-                            <b>Azure Identity Type:</b> {provider.identity.identity_type}
+                            <b>Azure Identity Type:</b> {identity_type}
                             </li>
                             <li class="list-group-item">
                                 <b>Azure Identity ID:</b> {html_identity}
@@ -456,6 +678,8 @@ class HTML(Output):
                 )
             except AttributeError:
                 profile = "default"
+            project_ids = escape(", ".join(provider.project_ids))
+            profile = escape(str(profile))
             return f"""
                 <div class="col-md-2">
                     <div class="card">
@@ -464,7 +688,7 @@ class HTML(Output):
                         </div>
                         <ul class="list-group list-group-flush">
                             <li class="list-group-item">
-                                <b>GCP Project IDs:</b> {", ".join(provider.project_ids)}
+                                <b>GCP Project IDs:</b> {project_ids}
                             </li>
                         </ul>
                     </div>
@@ -499,6 +723,8 @@ class HTML(Output):
             str: the HTML assessment summary
         """
         try:
+            cluster = escape(str(provider.identity.cluster))
+            context = escape(str(provider.identity.context))
             return f"""
                 <div class="col-md-2">
                     <div class="card">
@@ -508,7 +734,7 @@ class HTML(Output):
                         <ul class="list-group
                         list-group-flush">
                             <li class="list-group-item">
-                                <b>Kubernetes Cluster:</b> {provider.identity.cluster}
+                                <b>Kubernetes Cluster:</b> {cluster}
                             </li>
                         </ul>
                     </div>
@@ -521,10 +747,1195 @@ class HTML(Output):
                         <ul class="list-group
                         list-group-flush">
                             <li class="list-group-item">
-                                <b>Kubernetes Context:</b> {provider.identity.context}
+                                <b>Kubernetes Context:</b> {context}
                             </li>
                         </ul>
                     </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_github_assessment_summary(provider: Provider) -> str:
+        """
+        get_github_assessment_summary gets the HTML assessment summary for the provider
+
+        Args:
+            provider (Provider): the provider object
+
+        Returns:
+            str: the HTML assessment summary
+        """
+        try:
+            auth_method = escape(str(provider.auth_method))
+            if hasattr(provider.identity, "account_name"):
+                # GithubIdentityInfo (Personal Access Token, OAuth)
+                account_name = escape(str(provider.identity.account_name))
+                account_info_items = f"""
+                            <li class="list-group-item">
+                                <b>GitHub account:</b> {account_name}
+                            </li>
+                            """
+                # Add email if available
+                if (
+                    hasattr(provider.identity, "account_email")
+                    and provider.identity.account_email
+                ):
+                    account_email = escape(str(provider.identity.account_email))
+                    account_info_items += f"""
+                                <li class="list-group-item">
+                                    <b>GitHub account email:</b> {account_email}
+                                </li>"""
+            elif hasattr(provider.identity, "app_id"):
+                # GithubAppIdentityInfo (GitHub App)
+                # Assessment items: App Name and Installations
+                app_name = escape(str(provider.identity.app_name))
+                account_info_items = f"""
+                                <li class="list-group-item">
+                                    <b>GitHub App Name:</b> {app_name}
+                                </li>"""
+                # Add installations if available
+                if (
+                    hasattr(provider.identity, "installations")
+                    and provider.identity.installations
+                ):
+                    installations_display = escape(
+                        ", ".join(provider.identity.installations)
+                    )
+                    account_info_items += f"""
+                            <li class="list-group-item">
+                                <b>Installations:</b> {installations_display}
+                            </li>"""
+                else:
+                    account_info_items += """
+                            <li class="list-group-item">
+                                <b>Installations:</b> No installations found
+                            </li>"""
+
+                # Credentials items: Authentication method and App ID
+                app_id = escape(str(provider.identity.app_id))
+                credentials_items = f"""
+                            <li class="list-group-item">
+                                <b>GitHub authentication method:</b> {auth_method}
+                            </li>
+                            <li class="list-group-item">
+                                <b>GitHub App ID:</b> {app_id}
+                            </li>"""
+            else:
+                # Fallback for other identity types
+                account_info_items = ""
+                credentials_items = f"""
+                            <li class="list-group-item">
+                                <b>GitHub authentication method:</b> {auth_method}
+                            </li>"""
+
+            # For PAT/OAuth, use default credentials structure
+            if hasattr(provider.identity, "account_name"):
+                credentials_items = f"""
+                            <li class="list-group-item">
+                                <b>GitHub authentication method:</b> {auth_method}
+                            </li>"""
+
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            GitHub Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            {account_info_items}
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            GitHub Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            {credentials_items}
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_m365_assessment_summary(provider: Provider) -> str:
+        """
+        get_m365_assessment_summary gets the HTML assessment summary for the provider
+        Args:
+            provider (Provider): the provider object
+
+        Returns:
+            str: the HTML assessment summary
+        """
+        try:
+            tenant_domain = escape(str(provider.identity.tenant_domain))
+            identity_type = escape(str(provider.identity.identity_type))
+            identity_id = escape(str(provider.identity.identity_id))
+            user_item = ""
+            if (
+                hasattr(provider.identity, "user")
+                and provider.identity.user is not None
+            ):
+                user = escape(str(provider.identity.user))
+                user_item = f"""<li class="list-group-item">
+                                <b>M365 User:</b> {user}
+                            </li>"""
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            M365 Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>M365 Tenant Domain:</b> {tenant_domain}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        M365 Credentials
+                    </div>
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item">
+                            <b>M365 Identity Type:</b> {identity_type}
+                            </li>
+                            <li class="list-group-item">
+                                <b>M365 Identity ID:</b> {identity_id}
+                            </li>
+                            {user_item}
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    def get_nhn_assessment_summary(provider: Provider) -> str:
+        """
+        get_nhn_assessment_summary gets the HTML assessment summary for the provider
+
+        Args:
+            provider (Provider): the provider object
+
+        Returns:
+            str: the HTML assessment summary
+        """
+        try:
+            tenant_domain = escape(str(provider.identity.tenant_domain))
+            identity_type = escape(str(provider.identity.identity_type))
+            identity_id = escape(str(provider.identity.identity_id))
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            NHN Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>NHN Tenant Domain:</b> {tenant_domain}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        NHN Credentials
+                    </div>
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item">
+                            <b>NHN Identity Type:</b> {identity_type}
+                            </li>
+                            <li class="list-group-item">
+                                <b>NHN Identity ID:</b> {identity_id}
+                            </li>
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_mongodbatlas_assessment_summary(provider: Provider) -> str:
+        """
+        get_mongodbatlas_assessment_summary gets the HTML assessment summary for the provider
+
+        Args:
+            provider (Provider): the provider object
+
+        Returns:
+            str: the HTML assessment summary
+        """
+        try:
+            organization_name = escape(str(provider.identity.organization_name))
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            MongoDB Atlas Assessment Summary
+                        </div>
+                        <ul class="list-group
+                        list-group-flush">
+                            <li class="list-group-item">
+                                <b>MongoDB Atlas organization:</b> {organization_name}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            MongoDB Atlas Credentials
+                        </div>
+                        <ul class="list-group
+                        list-group-flush">
+                            <li class="list-group-item">
+                                <b>MongoDB Atlas authentication method:</b> API Key
+                            </li>
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_iac_assessment_summary(provider: Provider) -> str:
+        """
+        get_iac_assessment_summary gets the HTML assessment summary for the provider
+
+        Args:
+            provider (Provider): the provider object
+
+        Returns:
+            str: the HTML assessment summary
+        """
+        try:
+            if provider.scan_repository_url:
+                target_info = "<b>IAC repository URL:</b> " + str(
+                    escape(str(provider.scan_repository_url))
+                )
+            else:
+                target_info = "<b>IAC path:</b> " + str(escape(str(provider.scan_path)))
+            auth_method = escape(str(provider.auth_method))
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            IAC Assessment Summary
+                        </div>
+                        <ul class="list-group
+                        list-group-flush">
+                            <li class="list-group-item">
+                                {target_info}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            IAC Credentials
+                        </div>
+                        <ul class="list-group
+                        list-group-flush">
+                            <li class="list-group-item">
+                                <b>IAC authentication method:</b> {auth_method}
+                            </li>
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_image_assessment_summary(provider: Provider) -> str:
+        """
+        get_image_assessment_summary gets the HTML assessment summary for the Image provider
+
+        Args:
+            provider (Provider): the Image provider object
+
+        Returns:
+            str: the HTML assessment summary
+        """
+        try:
+            if provider.registry:
+                registry = escape(str(provider.registry))
+                target_info = f"<b>Registry URL:</b> {registry}"
+            else:
+                images = escape(", ".join(provider.images))
+                target_info = f"<b>Images:</b> {images}"
+
+            auth_method = escape(str(provider.auth_method))
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            Image Assessment Summary
+                        </div>
+                        <ul class="list-group
+                        list-group-flush">
+                            <li class="list-group-item">
+                                {target_info}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            Image Credentials
+                        </div>
+                        <ul class="list-group
+                        list-group-flush">
+                            <li class="list-group-item">
+                                <b>Image authentication method:</b> {auth_method}
+                            </li>
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_llm_assessment_summary(provider: Provider) -> str:
+        """
+        get_llm_assessment_summary gets the HTML assessment summary for the LLM provider
+
+        Args:
+            provider (Provider): the LLM provider object
+
+        Returns:
+            str: HTML assessment summary for the LLM provider
+        """
+        try:
+            model = escape(str(provider.model))
+            plugins = escape(", ".join(provider.plugins))
+            max_concurrency = escape(str(provider.max_concurrency))
+            config_file = escape(
+                str(provider.config_path)
+                if provider.config_path
+                else "Using promptfoo defaults"
+            )
+            return f"""
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-robot"></i> LLM Security Assessment Summary
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <ul class="list-group
+                        list-group-flush">
+                            <li class="list-group-item">
+                                <b>Target LLM:</b> {model}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Plugins:</b> {plugins}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Max concurrency:</b> {max_concurrency}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Config file:</b> {config_file}
+                            </li>
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_oraclecloud_assessment_summary(provider: Provider) -> str:
+        """
+        get_oraclecloud_assessment_summary gets the HTML assessment summary for the OracleCloud provider
+
+        Args:
+            provider (Provider): the OracleCloud provider object
+
+        Returns:
+            str: HTML assessment summary for the OracleCloud provider
+        """
+        try:
+            profile = getattr(provider.session, "profile", "default")
+            if profile is None:
+                profile = "instance-principal"
+            tenancy_name = getattr(provider.identity, "tenancy_name", "unknown")
+            tenancy_id = getattr(provider.identity, "tenancy_id", "unknown")
+
+            tenancy = escape(
+                str(tenancy_name if tenancy_name != "unknown" else tenancy_id)
+            )
+            profile = escape(str(profile))
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            OracleCloud Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>OracleCloud Tenancy:</b> {tenancy}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            OracleCloud Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Profile:</b> {profile}
+                            </li>
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_stackit_assessment_summary(provider: Provider) -> str:
+        """
+        get_stackit_assessment_summary gets the HTML assessment summary for the StackIT provider
+
+        Args:
+            provider (Provider): the StackIT provider object
+
+        Returns:
+            str: HTML assessment summary for the StackIT provider
+        """
+        try:
+            project_id = getattr(provider.identity, "project_id", "unknown")
+            project_name = getattr(provider.identity, "project_name", "")
+            audited_regions = getattr(provider.identity, "audited_regions", set())
+
+            project_id = escape(str(project_id))
+            project_name_item = (
+                f"""
+                            <li class="list-group-item">
+                                <b>Project Name:</b> {escape(str(project_name))}
+                            </li>"""
+                if project_name
+                else ""
+            )
+
+            regions_item = (
+                f"""
+                            <li class="list-group-item">
+                                <b>Regions:</b> {escape(", ".join(sorted(audited_regions)))}
+                            </li>"""
+                if audited_regions
+                else ""
+            )
+
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            StackIT Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Project ID:</b> {project_id}
+                            </li>
+                            {project_name_item}
+                            {regions_item}
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            StackIT Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Authentication Type:</b> Service Account Key
+                            </li>
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_cloudflare_assessment_summary(provider: Provider) -> str:
+        """
+        get_cloudflare_assessment_summary gets the HTML assessment summary for the Cloudflare provider
+
+        Args:
+            provider (Provider): the Cloudflare provider object
+
+        Returns:
+            str: HTML assessment summary for the Cloudflare provider
+        """
+        try:
+            # Build assessment summary items (only non-None values)
+            assessment_items = ""
+            if provider.accounts:
+                accounts = escape(", ".join([str(acc.id) for acc in provider.accounts]))
+                assessment_items += f"""
+                            <li class="list-group-item">
+                                <b>Accounts:</b> {accounts}
+                            </li>"""
+
+            # Build credentials items (only non-None values)
+            credentials_items = ""
+
+            # Authentication method
+            if provider.session.api_token:
+                credentials_items += """
+                            <li class="list-group-item">
+                                <b>Authentication:</b> API Token
+                            </li>"""
+            elif provider.session.api_key and provider.session.api_email:
+                credentials_items += """
+                            <li class="list-group-item">
+                                <b>Authentication:</b> API Key + Email
+                            </li>"""
+
+            # Email (from identity or session)
+            email = getattr(provider.identity, "email", None) or getattr(
+                provider.session, "api_email", None
+            )
+            if email:
+                email = escape(str(email))
+                credentials_items += f"""
+                            <li class="list-group-item">
+                                <b>Email:</b> {email}
+                            </li>"""
+
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            Cloudflare Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">{assessment_items}
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            Cloudflare Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">{credentials_items}
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_alibabacloud_assessment_summary(provider: Provider) -> str:
+        """
+        get_alibabacloud_assessment_summary gets the HTML assessment summary for the Alibaba Cloud provider
+
+        Args:
+            provider (Provider): the Alibaba Cloud provider object
+
+        Returns:
+            str: HTML assessment summary for the Alibaba Cloud provider
+        """
+        try:
+            account_id = getattr(provider.identity, "account_id", "unknown")
+            account_name = getattr(provider.identity, "account_name", "")
+            audited_regions = getattr(
+                provider.identity, "audited_regions", "All Regions"
+            )
+            identity_arn = getattr(provider.identity, "identity_arn", "unknown")
+            user_name = getattr(provider.identity, "user_name", "unknown")
+
+            account_name_item = (
+                f"""
+                            <li class="list-group-item">
+                                <b>Account Name:</b> {escape(str(account_name))}
+                            </li>"""
+                if account_name
+                else ""
+            )
+            account_id = escape(str(account_id))
+            audited_regions = escape(str(audited_regions))
+            user_name = escape(str(user_name))
+            identity_arn = escape(str(identity_arn))
+
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            Alibaba Cloud Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Account ID:</b> {account_id}
+                            </li>
+                            {account_name_item}
+                            <li class="list-group-item">
+                                <b>Audited Regions:</b> {audited_regions}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            Alibaba Cloud Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>User Name:</b> {user_name}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Identity ARN:</b> {identity_arn}
+                            </li>
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_openstack_assessment_summary(provider: Provider) -> str:
+        """
+        get_openstack_assessment_summary gets the HTML assessment summary for the OpenStack provider
+
+        Args:
+            provider (Provider): the OpenStack provider object
+
+        Returns:
+            str: HTML assessment summary for the OpenStack provider
+        """
+        try:
+            project_id = getattr(provider.identity, "project_id", "unknown")
+            project_name = getattr(provider.identity, "project_name", "")
+            region_name = getattr(provider.identity, "region_name", "unknown")
+            username = getattr(provider.identity, "username", "unknown")
+            user_id = getattr(provider.identity, "user_id", "")
+
+            project_name_item = (
+                f"""
+                            <li class="list-group-item">
+                                <b>Project Name:</b> {escape(str(project_name))}
+                            </li>"""
+                if project_name
+                else ""
+            )
+
+            user_id_item = (
+                f"""
+                            <li class="list-group-item">
+                                <b>User ID:</b> {escape(str(user_id))}
+                            </li>"""
+                if user_id
+                else ""
+            )
+            project_id = escape(str(project_id))
+            region_name = escape(str(region_name))
+            username = escape(str(username))
+
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            OpenStack Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Project ID:</b> {project_id}
+                            </li>
+                            {project_name_item}
+                            <li class="list-group-item">
+                                <b>Region:</b> {region_name}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            OpenStack Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Username:</b> {username}
+                            </li>
+                            {user_id_item}
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_googleworkspace_assessment_summary(provider: Provider) -> str:
+        """
+        get_googleworkspace_assessment_summary gets the HTML assessment summary for the Google Workspace provider
+
+        Args:
+            provider (Provider): the Google Workspace provider object
+
+        Returns:
+            str: HTML assessment summary for the Google Workspace provider
+        """
+        try:
+            domain = escape(str(provider.identity.domain))
+            customer_id = escape(str(provider.identity.customer_id))
+            delegated_user = escape(str(provider.identity.delegated_user))
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            Google Workspace Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Domain:</b> {domain}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Customer ID:</b> {customer_id}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            Google Workspace Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Delegated User:</b> {delegated_user}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Authentication Method:</b> Service Account with Domain-Wide Delegation
+                            </li>
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_e2enetworks_assessment_summary(provider: Provider) -> str:
+        """Get the HTML assessment summary for the E2E Networks provider."""
+        try:
+            locations = escape(", ".join(provider.identity.locations))
+            project_id = escape(str(provider.identity.project_id))
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            E2E Networks Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Project ID:</b> {project_id}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Locations:</b> {locations}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            E2E Networks Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Authentication:</b> API Key + Bearer Token
+                            </li>
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_vercel_assessment_summary(provider: Provider) -> str:
+        """
+        get_vercel_assessment_summary gets the HTML assessment summary for the Vercel provider
+
+        Args:
+            provider (Provider): the Vercel provider object
+
+        Returns:
+            str: HTML assessment summary for the Vercel provider
+        """
+        try:
+            assessment_items = ""
+
+            team = getattr(provider.identity, "team", None)
+            if team:
+                team_name = escape(str(team.name))
+                team_id = escape(str(team.id))
+                assessment_items += f"""
+                            <li class="list-group-item">
+                                <b>Team:</b> {team_name} ({team_id})
+                            </li>"""
+
+            credentials_items = """
+                            <li class="list-group-item">
+                                <b>Authentication:</b> API Token
+                            </li>"""
+
+            email = getattr(provider.identity, "email", None)
+            if email:
+                email = escape(str(email))
+                credentials_items += f"""
+                            <li class="list-group-item">
+                                <b>Email:</b> {email}
+                            </li>"""
+
+            username = getattr(provider.identity, "username", None)
+            if username:
+                username = escape(str(username))
+                credentials_items += f"""
+                            <li class="list-group-item">
+                                <b>Username:</b> {username}
+                            </li>"""
+
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            Vercel Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">{assessment_items}
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            Vercel Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">{credentials_items}
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_okta_assessment_summary(provider: Provider) -> str:
+        """
+        get_okta_assessment_summary gets the HTML assessment summary for the Okta provider
+
+        Args:
+            provider (Provider): the Okta provider object
+
+        Returns:
+            str: HTML assessment summary for the Okta provider
+        """
+        try:
+            org_domain = escape(str(provider.identity.org_domain))
+            auth_method = escape(str(provider.auth_method))
+            client_id = escape(str(provider.identity.client_id))
+            assessment_items = f"""
+                            <li class="list-group-item">
+                                <b>Okta Domain:</b> {org_domain}
+                            </li>"""
+
+            credentials_items = f"""
+                            <li class="list-group-item">
+                                <b>Authentication:</b> {auth_method}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Client ID:</b> {client_id}
+                            </li>"""
+
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            Okta Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">{assessment_items}
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            Okta Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">{credentials_items}
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_scaleway_assessment_summary(provider: Provider) -> str:
+        """
+        get_scaleway_assessment_summary gets the HTML assessment summary for the Scaleway provider
+
+        Args:
+            provider (Provider): the Scaleway provider object
+
+        Returns:
+            str: HTML assessment summary for the Scaleway provider
+        """
+        try:
+            organization_id = escape(str(provider.identity.organization_id))
+            assessment_items = f"""
+                            <li class="list-group-item">
+                                <b>Organization ID:</b> {organization_id}
+                            </li>"""
+
+            credentials_items = """
+                            <li class="list-group-item">
+                                <b>Authentication:</b> API Key
+                            </li>"""
+
+            access_key = getattr(provider.session, "access_key", None)
+            if access_key:
+                access_key = escape(str(access_key))
+                credentials_items += f"""
+                            <li class="list-group-item">
+                                <b>Access Key:</b> {access_key}
+                            </li>"""
+
+            bearer_type = getattr(provider.identity, "bearer_type", None)
+            bearer_email = getattr(provider.identity, "bearer_email", None)
+            bearer_id = getattr(provider.identity, "bearer_id", None)
+            if bearer_type:
+                bearer_label = bearer_email or bearer_id or "-"
+                bearer_type = escape(str(bearer_type))
+                bearer_label = escape(str(bearer_label))
+                credentials_items += f"""
+                            <li class="list-group-item">
+                                <b>Bearer:</b> {bearer_type} ({bearer_label})
+                            </li>"""
+
+            region = getattr(provider.session, "default_region", None)
+            if region:
+                region = escape(str(region))
+                credentials_items += f"""
+                            <li class="list-group-item">
+                                <b>Default Region:</b> {region}
+                            </li>"""
+
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            Scaleway Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">{assessment_items}
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            Scaleway Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">{credentials_items}
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_linode_assessment_summary(provider: Provider) -> str:
+        """
+        get_linode_assessment_summary gets the HTML assessment summary for the Linode provider
+
+        Args:
+            provider (Provider): the Linode provider object
+
+        Returns:
+            str: HTML assessment summary for the Linode provider
+        """
+        try:
+            username = getattr(provider.identity, "username", None) or "-"
+            email = getattr(provider.identity, "email", None) or "-"
+            account_id = getattr(provider.identity, "account_id", None) or "-"
+
+            username = escape(str(username))
+            email = escape(str(email))
+            account_id = escape(str(account_id))
+            assessment_items = f"""
+                            <li class="list-group-item">
+                                <b>Account ID:</b> {account_id}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Username:</b> {username}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Email:</b> {email}
+                            </li>"""
+
+            credentials_items = """
+                            <li class="list-group-item">
+                                <b>Authentication:</b> API Token
+                            </li>"""
+
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            Linode Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">{assessment_items}
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            Linode Credentials
+                        </div>
+                        <ul class="list-group list-group-flush">{credentials_items}
+                        </ul>
+                    </div>
+                </div>"""
+        except Exception as error:
+            logger.error(
+                f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+            )
+            return ""
+
+    @staticmethod
+    def get_huaweicloud_assessment_summary(provider: Provider) -> str:
+        """
+        get_huaweicloud_assessment_summary gets the HTML assessment summary for the Huawei Cloud provider
+
+        Args:
+            provider (Provider): the Huawei Cloud provider object
+
+        Returns:
+            str: HTML assessment summary for the Huawei Cloud provider
+        """
+        try:
+            profile = (
+                provider.identity.profile
+                if provider.identity.profile is not None
+                else "default"
+            )
+            if isinstance(provider.identity.regions, set):
+                audited_regions = ", ".join(sorted(provider.identity.regions))
+            elif not provider.identity.regions:
+                audited_regions = "All Regions"
+            else:
+                audited_regions = ", ".join(provider.identity.regions)
+            account_id = escape(str(provider.identity.account_id))
+            account_name = escape(str(provider.identity.account_name))
+            profile = escape(str(profile))
+            audited_regions = escape(str(audited_regions))
+            domain_id = escape(str(provider.identity.domain_id))
+            user_id = escape(str(provider.identity.user_id))
+            user_name = escape(str(provider.identity.user_name))
+            identity_type = escape(str(provider.identity.identity_type))
+            return f"""
+                <div class="col-md-2">
+                    <div class="card">
+                        <div class="card-header">
+                            Huawei Cloud Assessment Summary
+                        </div>
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item">
+                                <b>Account ID:</b> {account_id}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Account Name:</b> {account_name}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Profile:</b> {profile}
+                            </li>
+                            <li class="list-group-item">
+                                <b>Audited Regions:</b> {audited_regions}
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        Huawei Cloud Credentials
+                    </div>
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item">
+                            <b>Domain ID:</b> {domain_id}
+                        </li>
+                        <li class="list-group-item">
+                            <b>User ID:</b> {user_id}
+                        </li>
+                        <li class="list-group-item">
+                            <b>User Name:</b> {user_name}
+                        </li>
+                        <li class="list-group-item">
+                            <b>Identity Type:</b> {identity_type}
+                        </li>
+                    </ul>
+                </div>
                 </div>"""
         except Exception as error:
             logger.error(
@@ -548,14 +1959,17 @@ class HTML(Output):
             # It is not pretty but useful
             # AWS_provider --> aws
             # GCP_provider --> gcp
+            # GitHub_provider --> github
             # Azure_provider --> azure
             # Kubernetes_provider --> kubernetes
 
-            # Dynamically get the Provider quick inventory handler
-            provider_html_assessment_summary_function = (
-                f"get_{provider.type}_assessment_summary"
-            )
-            return getattr(HTML, provider_html_assessment_summary_function)(provider)
+            # Try static method first, fall back to provider method
+            method_name = f"get_{provider.type}_assessment_summary"
+            if hasattr(HTML, method_name):
+                return getattr(HTML, method_name)(provider)
+            else:
+                # Dynamic fallback: any external/custom provider
+                return provider.get_html_assessment_summary()
         except Exception as error:
             logger.error(
                 f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"

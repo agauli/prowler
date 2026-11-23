@@ -7,23 +7,23 @@ class app_ensure_using_http20(Check):
         findings = []
 
         for (
-            subscription_name,
+            subscription_id,
             apps,
         ) in app_client.apps.items():
-            for app_name, app in apps.items():
-                report = Check_Report_Azure(self.metadata())
+            subscription_name = app_client.subscriptions.get(
+                subscription_id, subscription_id
+            )
+            for app in apps.values():
+                report = Check_Report_Azure(metadata=self.metadata(), resource=app)
+                report.subscription = subscription_id
                 report.status = "FAIL"
-                report.subscription = subscription_name
-                report.resource_name = app_name
-                report.resource_id = app.resource_id
-                report.location = app.location
-                report.status_extended = f"HTTP/2.0 is not enabled for app '{app_name}' in subscription '{subscription_name}'."
+                report.status_extended = f"HTTP/2.0 is not enabled for app '{app.name}' in subscription '{subscription_name} ({subscription_id})'."
 
                 if app.configurations and getattr(
                     app.configurations, "http20_enabled", False
                 ):
                     report.status = "PASS"
-                    report.status_extended = f"HTTP/2.0 is enabled for app '{app_name}' in subscription '{subscription_name}'."
+                    report.status_extended = f"HTTP/2.0 is enabled for app '{app.name}' in subscription '{subscription_name} ({subscription_id})'."
 
                 findings.append(report)
 

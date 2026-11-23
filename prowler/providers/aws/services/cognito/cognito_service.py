@@ -1,27 +1,26 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
 
-################## CognitoIDP
 class CognitoIDP(AWSService):
     def __init__(self, provider):
         super().__init__("cognito-idp", provider)
 
         self.user_pools = {}
-        self.__threading_call__(self.__list_user_pools__)
-        self.__describe_user_pools__()
-        self.__list_user_pool_clients__()
-        self.__describe_user_pool_clients__()
-        self.__get_user_pool_mfa_config__()
-        self.__get_user_pool_risk_configuration__()
+        self.__threading_call__(self._list_user_pools)
+        self._describe_user_pools()
+        self._list_user_pool_clients()
+        self._describe_user_pool_clients()
+        self._get_user_pool_mfa_config()
+        self._get_user_pool_risk_configuration()
 
-    def __list_user_pools__(self, regional_client):
+    def _list_user_pools(self, regional_client):
         logger.info("Cognito - Listing User Pools...")
         try:
             user_pools_paginator = regional_client.get_paginator("list_user_pools")
@@ -51,7 +50,7 @@ class CognitoIDP(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_user_pools__(self):
+    def _describe_user_pools(self):
         logger.info("Cognito - Describing User Pools...")
         try:
             for user_pool in self.user_pools.values():
@@ -114,26 +113,29 @@ class CognitoIDP(AWSService):
                 f"{user_pool.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_user_pool_clients__(self):
+    def _list_user_pool_clients(self):
         logger.info("Cognito - Listing User Pool Clients...")
         try:
             for user_pool in self.user_pools.values():
                 try:
-                    user_pool_clients = self.regional_clients[
+                    user_pool_clients_paginator = self.regional_clients[
                         user_pool.region
-                    ].list_user_pool_clients(UserPoolId=user_pool.id)
-                    for user_pool_client in user_pool_clients["UserPoolClients"]:
-                        user_pool_client_arn = (
-                            f"{user_pool.arn}/client/{user_pool_client['ClientId']}"
-                        )
-                        self.user_pools[user_pool.arn].user_pool_clients[
-                            user_pool_client["ClientId"]
-                        ] = UserPoolClient(
-                            id=user_pool_client["ClientId"],
-                            name=user_pool_client["ClientName"],
-                            arn=user_pool_client_arn,
-                            region=user_pool.region,
-                        )
+                    ].get_paginator("list_user_pool_clients")
+                    for page in user_pool_clients_paginator.paginate(
+                        UserPoolId=user_pool.id
+                    ):
+                        for user_pool_client in page["UserPoolClients"]:
+                            user_pool_client_arn = (
+                                f"{user_pool.arn}/client/{user_pool_client['ClientId']}"
+                            )
+                            self.user_pools[user_pool.arn].user_pool_clients[
+                                user_pool_client["ClientId"]
+                            ] = UserPoolClient(
+                                id=user_pool_client["ClientId"],
+                                name=user_pool_client["ClientName"],
+                                arn=user_pool_client_arn,
+                                region=user_pool.region,
+                            )
                 except Exception as error:
                     logger.error(
                         f"{user_pool.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
@@ -143,7 +145,7 @@ class CognitoIDP(AWSService):
                 f"{user_pool.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_user_pool_clients__(self):
+    def _describe_user_pool_clients(self):
         logger.info("Cognito - Describing User Pool Clients...")
         try:
             for user_pool in self.user_pools.values():
@@ -175,7 +177,7 @@ class CognitoIDP(AWSService):
                 f"{user_pool.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_user_pool_mfa_config__(self):
+    def _get_user_pool_mfa_config(self):
         logger.info("Cognito - Getting User Pool MFA Configuration...")
         try:
             for user_pool in self.user_pools.values():
@@ -202,7 +204,7 @@ class CognitoIDP(AWSService):
                 f"{user_pool.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_user_pool_risk_configuration__(self):
+    def _get_user_pool_risk_configuration(self):
         logger.info("Cognito - Getting User Pool Risk Configuration...")
         try:
             for user_pool in self.user_pools.values():
@@ -265,11 +267,11 @@ class CognitoIdentity(AWSService):
     def __init__(self, provider):
         super().__init__("cognito-identity", provider)
         self.identity_pools = {}
-        self.__threading_call__(self.__list_identity_pools__)
-        self.__describe_identity_pools__()
-        self.__get_identity_pool_roles__()
+        self.__threading_call__(self._list_identity_pools)
+        self._describe_identity_pools()
+        self._get_identity_pool_roles()
 
-    def __list_identity_pools__(self, regional_client):
+    def _list_identity_pools(self, regional_client):
         logger.info("Cognito - Listing Identity Pools...")
         try:
             identity_pools_paginator = regional_client.get_paginator(
@@ -297,7 +299,7 @@ class CognitoIdentity(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_identity_pools__(self):
+    def _describe_identity_pools(self):
         logger.info("Cognito - Describing Identity Pools...")
         try:
             for identity_pool in self.identity_pools.values():
@@ -325,7 +327,7 @@ class CognitoIdentity(AWSService):
                 f"{identity_pool.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_identity_pool_roles__(self):
+    def _get_identity_pool_roles(self):
         logger.info("Cognito - Getting Identity Pool Roles...")
         try:
             for identity_pool in self.identity_pools.values():

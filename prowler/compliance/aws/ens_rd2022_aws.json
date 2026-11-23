@@ -1,5 +1,6 @@
 {
   "Framework": "ENS",
+  "Name": "ENS RD 311/2022 - Categoría Alta",
   "Version": "RD2022",
   "Provider": "AWS",
   "Description": "The accreditation scheme of the ENS (National Security Scheme) has been developed by the Ministry of Finance and Public Administrations and the CCN (National Cryptological Center). This includes the basic principles and minimum requirements necessary for the adequate protection of information.",
@@ -541,6 +542,9 @@
         }
       ],
       "Checks": [
+        "iam_role_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_sagemaker",
         "iam_user_accesskey_unused",
         "iam_user_console_access_unused"
       ]
@@ -594,6 +598,14 @@
       ],
       "Checks": [
         "config_recorder_all_regions_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "config_recorder_all_regions_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -620,6 +632,14 @@
       ],
       "Checks": [
         "config_recorder_all_regions_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "config_recorder_all_regions_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -751,6 +771,14 @@
       ],
       "Checks": [
         "config_recorder_all_regions_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "config_recorder_all_regions_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -777,6 +805,14 @@
       ],
       "Checks": [
         "config_recorder_all_regions_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "config_recorder_all_regions_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -909,6 +945,14 @@
       ],
       "Checks": [
         "guardduty_is_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -936,6 +980,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -962,6 +1014,14 @@
       ],
       "Checks": [
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -991,7 +1051,7 @@
       ]
     },
     {
-      "Id": "op.ext.7.aws.am.1",
+      "Id": "op.exp.7.aws.am.1",
       "Description": "Gestión de incidentes",
       "Attributes": [
         {
@@ -1739,6 +1799,14 @@
       ],
       "Checks": [
         "guardduty_is_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1817,6 +1885,14 @@
       ],
       "Checks": [
         "guardduty_is_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1869,6 +1945,14 @@
       ],
       "Checks": [
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1921,6 +2005,14 @@
       ],
       "Checks": [
         "guardduty_is_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1947,6 +2039,14 @@
       ],
       "Checks": [
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1973,6 +2073,14 @@
       ],
       "Checks": [
         "config_recorder_all_regions_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "config_recorder_all_regions_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -1999,6 +2107,14 @@
       ],
       "Checks": [
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -2052,6 +2168,14 @@
       ],
       "Checks": [
         "guardduty_is_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -2078,6 +2202,14 @@
       ],
       "Checks": [
         "config_recorder_all_regions_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "config_recorder_all_regions_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -2157,7 +2289,8 @@
         }
       ],
       "Checks": [
-        "ec2_securitygroup_allow_ingress_from_internet_to_all_ports"
+        "ec2_securitygroup_allow_ingress_from_internet_to_all_ports",
+        "ec2_confidential_workload_host_unrestricted_ingress"
       ]
     },
     {
@@ -2362,7 +2495,11 @@
         }
       ],
       "Checks": [
-        "elbv2_insecure_ssl_ciphers"
+        "elbv2_insecure_ssl_ciphers",
+        "elbv2_listener_pqc_tls_enabled",
+        "cloudfront_distributions_pqc_tls_enabled",
+        "apigateway_domain_name_pqc_tls_enabled",
+        "transfer_server_pqc_ssh_kex_enabled"
       ]
     },
     {
@@ -2385,7 +2522,11 @@
         }
       ],
       "Checks": [
-        "elbv2_insecure_ssl_ciphers"
+        "elbv2_insecure_ssl_ciphers",
+        "elbv2_listener_pqc_tls_enabled",
+        "cloudfront_distributions_pqc_tls_enabled",
+        "apigateway_domain_name_pqc_tls_enabled",
+        "transfer_server_pqc_ssh_kex_enabled"
       ]
     },
     {
@@ -2441,7 +2582,7 @@
         {
           "IdGrupoControl": "mp.com.4",
           "Marco": "medidas de protección",
-          "Categoria": "segregación de redes",
+          "Categoria": "protección de las comunicaciones",
           "DescripcionControl": "Se deberán abrir solo los puertos necesarios para el uso del servicio AWS WorkSpaces.",
           "Nivel": "alto",
           "Tipo": "requisito",
@@ -2535,8 +2676,7 @@
         }
       ],
       "Checks": [
-        "vpc_subnet_separate_private_public",
-        "vpc_different_regions"
+        "vpc_subnet_separate_private_public"
       ]
     },
     {
@@ -2589,8 +2729,8 @@
         }
       ],
       "Checks": [
-        "vpc_subnet_different_az",
-        "vpc_different_regions"
+        "vpc_different_regions",
+        "vpc_subnet_different_az"
       ]
     },
     {
@@ -2784,7 +2924,7 @@
         {
           "IdGrupoControl": "mp.sw.2.r1",
           "Marco": "medidas de protección",
-          "Categoria": "protección de la información",
+          "Categoria": "protección de las aplicaciones informáticas",
           "DescripcionControl": "Habilitar Amazon CodeBuild para el apoyo de la realización de pruebas en entornos aisaldos.",
           "Nivel": "alto",
           "Tipo": "recomendacion",
@@ -2932,7 +3072,7 @@
       ]
     },
     {
-      "Id": "op.pl.2.aws.warch.1",
+      "Id": "op.pl.2.r1.aws.warch.1",
       "Description": "Sistema de gestión",
       "Attributes": [
         {
@@ -2956,7 +3096,7 @@
       "Checks": []
     },
     {
-      "Id": "op.pl.2.aws.warch.1",
+      "Id": "op.pl.2.r2.aws.warch.1",
       "Description": "Sistema de gestión de la seguridad con mejora continua",
       "Attributes": [
         {
@@ -2980,7 +3120,7 @@
       "Checks": []
     },
     {
-      "Id": "op.pl.2.aws.warch.1",
+      "Id": "op.pl.2.r3.aws.warch.1",
       "Description": "Validación de datos",
       "Attributes": [
         {
@@ -3649,7 +3789,7 @@
             "trazabilidad",
             "autenticidad"
           ],
-          "ModoEjecucion": "automatico",
+          "ModoEjecucion": "automático",
           "Dependencias": []
         }
       ],
@@ -3869,7 +4009,7 @@
       "Description": "Acceso remoto (todos los niveles)",
       "Attributes": [
         {
-          "IdGrupoControl": "op.acc.6.9",
+          "IdGrupoControl": "op.acc.6.r9",
           "Marco": "operacional",
           "Categoria": "control de acceso",
           "DescripcionControl": "Deberá asegurarse que se está haciendo uso de HTTPS en todas las llamadas a API. Esto se puede lograr a través de una política IAM que rechace el tráfico que no sea HTTPS.",
@@ -3892,7 +4032,7 @@
       "Description": "Acceso remoto (todos los niveles)",
       "Attributes": [
         {
-          "IdGrupoControl": "op.acc.6.9",
+          "IdGrupoControl": "op.acc.6.r9",
           "Marco": "operacional",
           "Categoria": "control de acceso",
           "DescripcionControl": "En caso de que las llamadas a las APIs no se produzcan de manera constante, se recomienda condicionar su realización a aquellas franjas horarias en las que sean necesarias. ",
@@ -3935,7 +4075,7 @@
       "Checks": []
     },
     {
-      "Id": "op.exp.1.r3.aws.tag.1",
+      "Id": "op.exp.1.r4.aws.tag.1",
       "Description": "Lista de componentes software",
       "Attributes": [
         {
@@ -3959,7 +4099,7 @@
       "Checks": []
     },
     {
-      "Id": "op.exp.3.r4.aws.cfg.2",
+      "Id": "op.exp.3.r3.aws.cfg.2",
       "Description": "Copias de seguridad",
       "Attributes": [
         {
@@ -4259,6 +4399,29 @@
       "Checks": []
     },
     {
+      "Id": "op.cont.2.aws.vpc.1",
+      "Description": "Plan de continuidad",
+      "Attributes": [
+        {
+          "IdGrupoControl": "op.cont.2",
+          "Marco": "operacional",
+          "Categoria": "continuidad del servicio",
+          "DescripcionControl": "Distribución de las VPCs entre múltiples regiones y zonas de disponibilidad de AWS para garantizar la continuidad del servicio ante fallos regionales o zonales.",
+          "Nivel": "alto",
+          "Tipo": "requisito",
+          "Dimensiones": [
+            "disponibilidad"
+          ],
+          "ModoEjecucion": "automático",
+          "Dependencias": []
+        }
+      ],
+      "Checks": [
+        "vpc_different_regions",
+        "vpc_subnet_different_az"
+      ]
+    },
+    {
       "Id": "op.cont.3.aws.drs.1",
       "Description": "Pruebas periódicas",
       "Attributes": [
@@ -4278,6 +4441,14 @@
       ],
       "Checks": [
         "drs_job_exist"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "drs_job_exist",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -4303,32 +4474,6 @@
         }
       ],
       "Checks": []
-    },
-    {
-      "Id": "op.mon.3.aws.cwl.1",
-      "Description": "Vigilancia",
-      "Attributes": [
-        {
-          "IdGrupoControl": "op.mon.3",
-          "Marco": "operacional",
-          "Categoria": "monitorización del sistema",
-          "DescripcionControl": "Deberá asegurarse que todos los servicios que se utilicen en la arquitectura de la aplicación desplegada en AWS estén generando logs",
-          "Nivel": "alto",
-          "Tipo": "requisito",
-          "Dimensiones": [
-            "confidencialidad",
-            "integridad",
-            "trazabilidad",
-            "autenticidad",
-            "disponibilidad"
-          ],
-          "ModoEjecucion": "automatico",
-          "Dependencias": []
-        }
-      ],
-      "Checks": [
-        "cloudtrail_cloudwatch_logging_enabled"
-      ]
     },
     {
       "Id": "mp.com.2.aws.vpn.1",
@@ -4413,13 +4558,13 @@
       "Checks": []
     },
     {
-      "Id": "mp.sw.2.r1.aws.cfgd.1",
+      "Id": "mp.sw.2.r2.aws.cfgd.1",
       "Description": "Aceptación y puesta en servicio",
       "Attributes": [
         {
           "IdGrupoControl": "mp.sw.2.r2",
           "Marco": "medidas de protección",
-          "Categoria": "protección de la información",
+          "Categoria": "protección de las aplicaciones informáticas",
           "DescripcionControl": "Habilitar CloudFormation Guard para el apoyo en las tareas de inspección de recursos no conformes implementados en el código fuente.",
           "Nivel": "alto",
           "Tipo": "recomendacion",

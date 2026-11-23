@@ -10,9 +10,15 @@ class ec2_instance_account_imdsv2_enabled(Check):
                 instance_metadata_default.instances
                 or ec2_client.provider.scan_unused_services
             ):
-                report = Check_Report_AWS(self.metadata())
-                report.region = instance_metadata_default.region
-                report.resource_arn = ec2_client.account_arn_template
+                report = Check_Report_AWS(
+                    metadata=self.metadata(),
+                    resource=instance_metadata_default,
+                )
+                report.resource_arn = (
+                    f"arn:{ec2_client.audited_partition}:ec2:"
+                    f"{instance_metadata_default.region}:"
+                    f"{ec2_client.audited_account}:account"
+                )
                 report.resource_id = ec2_client.audited_account
                 if instance_metadata_default.http_tokens == "required":
                     report.status = "PASS"

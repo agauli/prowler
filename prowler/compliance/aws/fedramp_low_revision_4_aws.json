@@ -1,5 +1,6 @@
 {
   "Framework": "FedRAMP-Low-Revision-4",
+  "Name": "FedRAMP Low Revision 4",
   "Version": "",
   "Provider": "AWS",
   "Description": "The Federal Risk and Authorization Management Program (FedRAMP) was established in 2011. It provides a cost-effective, risk-based approach for the adoption and use of cloud services by the U.S. federal government. FedRAMP empowers federal agencies to use modern cloud technologies, with an emphasis on the security and protection of federal information.",
@@ -20,7 +21,6 @@
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudtrail_log_file_validation_enabled",
         "cloudwatch_changes_to_network_acls_alarm_configured",
         "opensearch_service_domains_cloudwatch_logging_enabled",
@@ -36,12 +36,29 @@
         "iam_rotate_access_key_90_days",
         "iam_user_mfa_enabled_console_access",
         "iam_user_hardware_mfa_enabled",
+        "iam_role_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_bedrock",
+        "iam_user_access_not_stale_to_sagemaker",
         "iam_user_accesskey_unused",
         "iam_user_console_access_unused",
         "rds_instance_integration_cloudwatch_logs",
         "redshift_cluster_audit_logging",
         "s3_bucket_server_access_logging_enabled",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -109,8 +126,21 @@
         "securityhub_enabled",
         "ec2_securitygroup_default_restrict_traffic",
         "ec2_networkacl_allow_ingress_any_port",
-        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22",
-        "ec2_networkacl_allow_ingress_any_port"
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -129,7 +159,6 @@
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudtrail_log_file_validation_enabled",
         "elbv2_logging_enabled",
         "rds_instance_integration_cloudwatch_logs",
@@ -169,6 +198,14 @@
       ],
       "Checks": [
         "cloudwatch_log_group_retention_policy_specific_days_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "cloudwatch_log_group_retention_policy_specific_days_enabled",
+          "ConfigKey": "log_group_retention_days",
+          "Operator": "gte",
+          "Value": 90
+        }
       ]
     },
     {
@@ -186,7 +223,6 @@
         "cloudtrail_multi_region_enabled",
         "cloudtrail_s3_dataevents_read_enabled",
         "cloudtrail_s3_dataevents_write_enabled",
-        "cloudtrail_multi_region_enabled",
         "cloudwatch_changes_to_network_acls_alarm_configured",
         "ec2_instance_imdsv2_enabled",
         "elbv2_waf_acl_attached",
@@ -194,6 +230,20 @@
         "rds_instance_enhanced_monitoring_enabled",
         "redshift_cluster_audit_logging",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -222,13 +272,11 @@
         "s3_bucket_public_access",
         "s3_bucket_policy_public_write_access",
         "s3_account_level_public_access_blocks",
-        "s3_bucket_public_access",
         "sagemaker_notebook_instance_without_direct_internet_access_configured",
         "ssm_managed_compliant_patching",
         "ec2_securitygroup_default_restrict_traffic",
         "ec2_networkacl_allow_ingress_any_port",
-        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22",
-        "ec2_networkacl_allow_ingress_any_port"
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22"
       ]
     },
     {
@@ -245,8 +293,15 @@
       "Checks": [
         "ec2_instance_managed_by_ssm",
         "guardduty_is_enabled",
-        "ssm_managed_compliant_patching",
         "ssm_managed_compliant_patching"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -262,9 +317,7 @@
       ],
       "Checks": [
         "dynamodb_tables_pitr_enabled",
-        "dynamodb_tables_pitr_enabled",
         "efs_have_backup_enabled",
-        "rds_instance_backup_enabled",
         "rds_instance_backup_enabled",
         "redshift_cluster_automated_snapshot",
         "s3_bucket_object_versioning"
@@ -283,12 +336,10 @@
       ],
       "Checks": [
         "dynamodb_tables_pitr_enabled",
-        "dynamodb_tables_pitr_enabled",
         "efs_have_backup_enabled",
         "elbv2_deletion_protection",
         "rds_instance_backup_enabled",
         "rds_instance_multi_az",
-        "rds_instance_backup_enabled",
         "redshift_cluster_automated_snapshot",
         "s3_bucket_object_versioning"
       ]
@@ -309,7 +360,6 @@
         "iam_root_hardware_mfa_enabled",
         "iam_root_mfa_enabled",
         "iam_no_root_access_key",
-        "iam_user_mfa_enabled_console_access",
         "iam_user_mfa_enabled_console_access"
       ]
     },
@@ -332,6 +382,20 @@
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings",
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -369,6 +433,14 @@
         "rds_instance_multi_az",
         "redshift_cluster_automated_snapshot",
         "s3_bucket_object_versioning"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -398,12 +470,10 @@
         "s3_bucket_public_access",
         "s3_bucket_policy_public_write_access",
         "s3_account_level_public_access_blocks",
-        "s3_bucket_public_access",
         "sagemaker_notebook_instance_without_direct_internet_access_configured",
         "ec2_securitygroup_default_restrict_traffic",
         "ec2_networkacl_allow_ingress_any_port",
-        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22",
-        "ec2_networkacl_allow_ingress_any_port"
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22"
       ]
     },
     {

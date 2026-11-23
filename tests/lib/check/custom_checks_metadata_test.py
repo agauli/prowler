@@ -8,12 +8,7 @@ from prowler.lib.check.custom_checks_metadata import (
     update_check_metadata,
     update_checks_metadata,
 )
-from prowler.lib.check.models import (
-    Check_Metadata_Model,
-    Code,
-    Recommendation,
-    Remediation,
-)
+from prowler.lib.check.models import CheckMetadata, Code, Recommendation, Remediation
 
 CUSTOM_CHECKS_METADATA_FIXTURE_FILE = f"{os.path.dirname(os.path.realpath(__file__))}/fixtures/custom_checks_metadata_example.yaml"
 CUSTOM_CHECKS_METADATA_FIXTURE_FILE_NOT_VALID = f"{os.path.dirname(os.path.realpath(__file__))}/fixtures/custom_checks_metadata_example_not_valid.yaml"
@@ -32,16 +27,18 @@ S3_BUCKET_LEVEL_PUBLIC_ACCESS_BLOCK_REMEDIATION_OTHER = "https://github.com/clou
 S3_BUCKET_LEVEL_PUBLIC_ACCESS_BLOCK_REMEDIATION_TEXT = (
     "Enable the S3 bucket level public access block."
 )
-S3_BUCKET_LEVEL_PUBLIC_ACCESS_BLOCK_REMEDIATION_URL = "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html"
+S3_BUCKET_LEVEL_PUBLIC_ACCESS_BLOCK_REMEDIATION_URL = (
+    "https://hub.prowler.com/check/s3_bucket_level_public_access_block"
+)
 
 
 class TestCustomChecksMetadata:
     def get_custom_check_metadata(self):
-        return Check_Metadata_Model(
+        return CheckMetadata(
             Provider="aws",
             CheckID=S3_BUCKET_LEVEL_PUBLIC_ACCESS_BLOCK_NAME,
             CheckTitle="Check S3 Bucket Level Public Access Block.",
-            CheckType=["Data Protection"],
+            CheckType=["Sensitive Data Identifications/PII"],
             CheckAliases=[],
             ServiceName="s3",
             SubServiceName="",
@@ -50,7 +47,7 @@ class TestCustomChecksMetadata:
             ResourceType="AwsS3Bucket",
             Description="Check S3 Bucket Level Public Access Block.",
             Risk="Public access policies may be applied to sensitive data buckets.",
-            RelatedUrl="https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html",
+            RelatedUrl="",
             Remediation=Remediation(
                 Code=Code(
                     NativeIaC="",
@@ -156,7 +153,7 @@ class TestCustomChecksMetadata:
                     "RelatedUrl": "https://cloud.google.com/compute/docs/ip-addresses/reserve-static-external-ip-address",
                     "Remediation": {
                         "Code": {
-                            "CLI": "https://docs.prowler.com/checks/gcp/google-cloud-public-policies/bc_gcp_public_2#cli-command",
+                            "CLI": "gcloud compute instances describe INSTANCE_NAME --zone=ZONE",
                             "NativeIaC": "https://cloud.google.com/compute/docs/reference/rest/v1/instances",
                             "Other": "https://cloud.google.com/compute/docs/ip-addresses/reserve-static-external-ip-address",
                             "Terraform": "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_instance",

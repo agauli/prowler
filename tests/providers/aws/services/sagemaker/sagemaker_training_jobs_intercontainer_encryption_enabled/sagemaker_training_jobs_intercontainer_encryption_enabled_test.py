@@ -1,7 +1,11 @@
 from unittest import mock
 
 from prowler.providers.aws.services.sagemaker.sagemaker_service import TrainingJob
-from tests.providers.aws.utils import AWS_ACCOUNT_NUMBER, AWS_REGION_EU_WEST_1
+from tests.providers.aws.utils import (
+    AWS_ACCOUNT_NUMBER,
+    AWS_REGION_EU_WEST_1,
+    set_mocked_aws_provider,
+)
 
 test_training_job = "test-training-job"
 training_job_arn = f"arn:aws:sagemaker:{AWS_REGION_EU_WEST_1}:{AWS_ACCOUNT_NUMBER}:training-job/{test_training_job}"
@@ -11,9 +15,18 @@ class Test_sagemaker_training_jobs_intercontainer_encryption_enabled:
     def test_no_training_jobs(self):
         sagemaker_client = mock.MagicMock
         sagemaker_client.sagemaker_training_jobs = []
-        with mock.patch(
-            "prowler.providers.aws.services.sagemaker.sagemaker_service.SageMaker",
-            sagemaker_client,
+
+        aws_provider = set_mocked_aws_provider([AWS_REGION_EU_WEST_1])
+
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.sagemaker.sagemaker_training_jobs_intercontainer_encryption_enabled.sagemaker_training_jobs_intercontainer_encryption_enabled.sagemaker_client",
+                sagemaker_client,
+            ),
         ):
             from prowler.providers.aws.services.sagemaker.sagemaker_training_jobs_intercontainer_encryption_enabled.sagemaker_training_jobs_intercontainer_encryption_enabled import (
                 sagemaker_training_jobs_intercontainer_encryption_enabled,
@@ -34,9 +47,18 @@ class Test_sagemaker_training_jobs_intercontainer_encryption_enabled:
                 container_traffic_encryption=True,
             )
         )
-        with mock.patch(
-            "prowler.providers.aws.services.sagemaker.sagemaker_service.SageMaker",
-            sagemaker_client,
+
+        aws_provider = set_mocked_aws_provider([AWS_REGION_EU_WEST_1])
+
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.sagemaker.sagemaker_training_jobs_intercontainer_encryption_enabled.sagemaker_training_jobs_intercontainer_encryption_enabled.sagemaker_client",
+                sagemaker_client,
+            ),
         ):
             from prowler.providers.aws.services.sagemaker.sagemaker_training_jobs_intercontainer_encryption_enabled.sagemaker_training_jobs_intercontainer_encryption_enabled import (
                 sagemaker_training_jobs_intercontainer_encryption_enabled,
@@ -63,9 +85,18 @@ class Test_sagemaker_training_jobs_intercontainer_encryption_enabled:
                 region=AWS_REGION_EU_WEST_1,
             )
         )
-        with mock.patch(
-            "prowler.providers.aws.services.sagemaker.sagemaker_service.SageMaker",
-            sagemaker_client,
+
+        aws_provider = set_mocked_aws_provider([AWS_REGION_EU_WEST_1])
+
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.sagemaker.sagemaker_training_jobs_intercontainer_encryption_enabled.sagemaker_training_jobs_intercontainer_encryption_enabled.sagemaker_client",
+                sagemaker_client,
+            ),
         ):
             from prowler.providers.aws.services.sagemaker.sagemaker_training_jobs_intercontainer_encryption_enabled.sagemaker_training_jobs_intercontainer_encryption_enabled import (
                 sagemaker_training_jobs_intercontainer_encryption_enabled,

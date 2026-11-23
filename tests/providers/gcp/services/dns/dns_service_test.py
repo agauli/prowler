@@ -11,12 +11,15 @@ from tests.providers.gcp.gcp_fixtures import (
 
 class TestDNSService:
     def test_service(self):
-        with patch(
-            "prowler.providers.gcp.lib.service.service.GCPService.__is_api_active__",
-            new=mock_is_api_active,
-        ), patch(
-            "prowler.providers.gcp.lib.service.service.GCPService.__generate_client__",
-            new=mock_api_client,
+        with (
+            patch(
+                "prowler.providers.gcp.lib.service.service.GCPService.__is_api_active__",
+                new=mock_is_api_active,
+            ),
+            patch(
+                "prowler.providers.gcp.lib.service.service.GCPService.__generate_client__",
+                new=mock_api_client,
+            ),
         ):
             api_keys_client = DNS(set_mocked_gcp_provider(project_ids=[GCP_PROJECT_ID]))
             assert api_keys_client.service == "dns"
@@ -27,11 +30,13 @@ class TestDNSService:
             assert api_keys_client.managed_zones[0].id.__class__.__name__ == "str"
             assert api_keys_client.managed_zones[0].dnssec
             assert len(api_keys_client.managed_zones[0].key_specs) == 0
+            assert api_keys_client.managed_zones[0].visibility == "public"
             assert api_keys_client.managed_zones[0].project_id == GCP_PROJECT_ID
             assert api_keys_client.managed_zones[1].name == "managed_zone2"
             assert api_keys_client.managed_zones[1].id.__class__.__name__ == "str"
             assert not api_keys_client.managed_zones[1].dnssec
             assert len(api_keys_client.managed_zones[1].key_specs) == 0
+            assert api_keys_client.managed_zones[1].visibility == "private"
             assert api_keys_client.managed_zones[1].project_id == GCP_PROJECT_ID
 
             assert len(api_keys_client.policies) == 2

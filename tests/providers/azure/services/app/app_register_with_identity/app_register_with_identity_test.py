@@ -2,7 +2,9 @@ from unittest import mock
 from uuid import uuid4
 
 from tests.providers.azure.azure_fixtures import (
+    AZURE_SUBSCRIPTION_DISPLAY,
     AZURE_SUBSCRIPTION_ID,
+    AZURE_SUBSCRIPTION_NAME,
     set_mocked_azure_provider,
 )
 
@@ -10,14 +12,18 @@ from tests.providers.azure.azure_fixtures import (
 class Test_app_register_with_identity:
     def test_app_no_subscriptions(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         app_client.apps = {}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity import (
                 app_register_with_identity,
@@ -29,14 +35,18 @@ class Test_app_register_with_identity:
 
     def test_app_subscriptions_empty(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         app_client.apps = {AZURE_SUBSCRIPTION_ID: {}}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity import (
                 app_register_with_identity,
@@ -49,13 +59,17 @@ class Test_app_register_with_identity:
     def test_app_none_configurations(self):
         resource_id = f"/subscriptions/{uuid4()}"
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity import (
                 app_register_with_identity,
@@ -64,8 +78,9 @@ class Test_app_register_with_identity:
 
             app_client.apps = {
                 AZURE_SUBSCRIPTION_ID: {
-                    "app_id-1": WebApp(
+                    resource_id: WebApp(
                         resource_id=resource_id,
+                        name="app_id-1",
                         auth_enabled=True,
                         configurations=None,
                         client_cert_mode="Ignore",
@@ -81,7 +96,7 @@ class Test_app_register_with_identity:
             assert result[0].status == "FAIL"
             assert (
                 result[0].status_extended
-                == f"App 'app_id-1' in subscription '{AZURE_SUBSCRIPTION_ID}' does not have an identity configured."
+                == f"App 'app_id-1' in subscription '{AZURE_SUBSCRIPTION_DISPLAY}' does not have an identity configured."
             )
             assert result[0].resource_id == resource_id
             assert result[0].resource_name == "app_id-1"
@@ -91,13 +106,17 @@ class Test_app_register_with_identity:
     def test_app_identity(self):
         resource_id = f"/subscriptions/{uuid4()}"
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_register_with_identity.app_register_with_identity import (
                 app_register_with_identity,
@@ -106,8 +125,9 @@ class Test_app_register_with_identity:
 
             app_client.apps = {
                 AZURE_SUBSCRIPTION_ID: {
-                    "app_id-1": WebApp(
+                    resource_id: WebApp(
                         resource_id=resource_id,
+                        name="app_id-1",
                         auth_enabled=True,
                         configurations=None,
                         client_cert_mode="Ignore",
@@ -123,7 +143,7 @@ class Test_app_register_with_identity:
             assert result[0].status == "PASS"
             assert (
                 result[0].status_extended
-                == f"App 'app_id-1' in subscription '{AZURE_SUBSCRIPTION_ID}' has an identity configured."
+                == f"App 'app_id-1' in subscription '{AZURE_SUBSCRIPTION_DISPLAY}' has an identity configured."
             )
             assert result[0].resource_id == resource_id
             assert result[0].resource_name == "app_id-1"

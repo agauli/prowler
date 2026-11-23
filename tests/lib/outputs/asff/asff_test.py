@@ -50,24 +50,26 @@ class TestASFF:
         )
 
         expected = AWSSecurityFindingFormat(
-            Id=f"prowler-{finding.check_id}-{AWS_ACCOUNT_NUMBER}-{AWS_REGION_EU_WEST_1}-{hash_sha512(finding.resource_uid)}",
+            Id=f"prowler-{finding.metadata.CheckID}-{AWS_ACCOUNT_NUMBER}-{AWS_REGION_EU_WEST_1}-{hash_sha512(finding.resource_uid)}",
             ProductArn=f"arn:{AWS_COMMERCIAL_PARTITION}:securityhub:{AWS_REGION_EU_WEST_1}::product/prowler/prowler",
             ProductFields=ProductFields(
                 ProviderVersion=prowler_version,
                 ProwlerResourceName=finding.resource_uid,
+                ProwlerAccountOrganizationalUnitId=finding.account_ou_uid,
+                ProwlerAccountOrganizationalUnitName=finding.account_ou_name,
             ),
-            GeneratorId="prowler-" + finding.check_id,
+            GeneratorId="prowler-" + finding.metadata.CheckID,
             AwsAccountId=AWS_ACCOUNT_NUMBER,
-            Types=finding.check_type.split(","),
+            Types=finding.metadata.CheckType,
             FirstObservedAt=timestamp,
             UpdatedAt=timestamp,
             CreatedAt=timestamp,
-            Severity=Severity(Label=finding.severity),
-            Title=finding.check_title,
+            Severity=Severity(Label=finding.metadata.Severity.value),
+            Title=finding.metadata.CheckTitle,
             Resources=[
                 Resource(
                     Id=finding.resource_uid,
-                    Type=finding.resource_type,
+                    Type=finding.metadata.ResourceType,
                     Partition=AWS_COMMERCIAL_PARTITION,
                     Region=AWS_REGION_EU_WEST_1,
                     Tags={"key1": "value1"},
@@ -80,11 +82,11 @@ class TestASFF:
             ),
             Remediation=Remediation(
                 Recommendation=Recommendation(
-                    Text=finding.remediation_recommendation_text,
-                    Url=finding.remediation_recommendation_url,
+                    Text=finding.metadata.Remediation.Recommendation.Text,
+                    Url=finding.metadata.Remediation.Recommendation.Url,
                 )
             ),
-            Description=finding.description,
+            Description=finding.status_extended,
         )
 
         asff = ASFF(findings=[finding])
@@ -105,7 +107,9 @@ class TestASFF:
             resource_uid="test-arn",
             resource_tags={"key1": "value1"},
         )
-        finding.remediation_recommendation_url = ""
+        finding.metadata.Remediation.Recommendation.Url = (
+            "https://hub.prowler.com/check/check-id"
+        )
 
         timestamp = timestamp_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -116,24 +120,26 @@ class TestASFF:
         timestamp = timestamp_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         expected = AWSSecurityFindingFormat(
-            Id=f"prowler-{finding.check_id}-{AWS_ACCOUNT_NUMBER}-{AWS_REGION_EU_WEST_1}-{hash_sha512(finding.resource_uid)}",
+            Id=f"prowler-{finding.metadata.CheckID}-{AWS_ACCOUNT_NUMBER}-{AWS_REGION_EU_WEST_1}-{hash_sha512(finding.resource_uid)}",
             ProductArn=f"arn:{AWS_COMMERCIAL_PARTITION}:securityhub:{AWS_REGION_EU_WEST_1}::product/prowler/prowler",
             ProductFields=ProductFields(
                 ProviderVersion=prowler_version,
                 ProwlerResourceName=finding.resource_uid,
+                ProwlerAccountOrganizationalUnitId=finding.account_ou_uid,
+                ProwlerAccountOrganizationalUnitName=finding.account_ou_name,
             ),
-            GeneratorId="prowler-" + finding.check_id,
+            GeneratorId="prowler-" + finding.metadata.CheckID,
             AwsAccountId=AWS_ACCOUNT_NUMBER,
-            Types=finding.check_type.split(","),
+            Types=finding.metadata.CheckType,
             FirstObservedAt=timestamp,
             UpdatedAt=timestamp,
             CreatedAt=timestamp,
-            Severity=Severity(Label=finding.severity),
-            Title=finding.check_title,
+            Severity=Severity(Label=finding.metadata.Severity.value),
+            Title=finding.metadata.CheckTitle,
             Resources=[
                 Resource(
                     Id=finding.resource_uid,
-                    Type=finding.resource_type,
+                    Type=finding.metadata.ResourceType,
                     Partition=AWS_COMMERCIAL_PARTITION,
                     Region=AWS_REGION_EU_WEST_1,
                     Tags={"key1": "value1"},
@@ -146,11 +152,11 @@ class TestASFF:
             ),
             Remediation=Remediation(
                 Recommendation=Recommendation(
-                    Text=finding.remediation_recommendation_text,
-                    Url="https://docs.aws.amazon.com/securityhub/latest/userguide/what-is-securityhub.html",
+                    Text=finding.metadata.Remediation.Recommendation.Text,
+                    Url="https://hub.prowler.com/check/check-id",
                 )
             ),
-            Description=finding.description,
+            Description=finding.status_extended,
         )
 
         asff = ASFF(findings=[finding])
@@ -170,7 +176,9 @@ class TestASFF:
             resource_name="test-resource",
             resource_uid="test-arn",
         )
-        finding.remediation_recommendation_url = ""
+        finding.metadata.Remediation.Recommendation.Url = (
+            "https://hub.prowler.com/check/check-id"
+        )
 
         timestamp = timestamp_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -181,24 +189,26 @@ class TestASFF:
         timestamp = timestamp_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         expected = AWSSecurityFindingFormat(
-            Id=f"prowler-{finding.check_id}-{AWS_ACCOUNT_NUMBER}-{AWS_REGION_EU_WEST_1}-{hash_sha512(finding.resource_uid)}",
+            Id=f"prowler-{finding.metadata.CheckID}-{AWS_ACCOUNT_NUMBER}-{AWS_REGION_EU_WEST_1}-{hash_sha512(finding.resource_uid)}",
             ProductArn=f"arn:{AWS_COMMERCIAL_PARTITION}:securityhub:{AWS_REGION_EU_WEST_1}::product/prowler/prowler",
             ProductFields=ProductFields(
                 ProviderVersion=prowler_version,
                 ProwlerResourceName=finding.resource_uid,
+                ProwlerAccountOrganizationalUnitId=finding.account_ou_uid,
+                ProwlerAccountOrganizationalUnitName=finding.account_ou_name,
             ),
-            GeneratorId="prowler-" + finding.check_id,
+            GeneratorId="prowler-" + finding.metadata.CheckID,
             AwsAccountId=AWS_ACCOUNT_NUMBER,
-            Types=finding.check_type.split(","),
+            Types=finding.metadata.CheckType,
             FirstObservedAt=timestamp,
             UpdatedAt=timestamp,
             CreatedAt=timestamp,
-            Severity=Severity(Label=finding.severity),
-            Title=finding.check_title,
+            Severity=Severity(Label=finding.metadata.Severity.value),
+            Title=finding.metadata.CheckTitle,
             Resources=[
                 Resource(
                     Id=finding.resource_uid,
-                    Type=finding.resource_type,
+                    Type=finding.metadata.ResourceType,
                     Partition=AWS_COMMERCIAL_PARTITION,
                     Region=AWS_REGION_EU_WEST_1,
                     Tags=None,
@@ -211,11 +221,11 @@ class TestASFF:
             ),
             Remediation=Remediation(
                 Recommendation=Recommendation(
-                    Text=finding.remediation_recommendation_text,
-                    Url="https://docs.aws.amazon.com/securityhub/latest/userguide/what-is-securityhub.html",
+                    Text=finding.metadata.Remediation.Recommendation.Text,
+                    Url="https://hub.prowler.com/check/check-id",
                 )
             ),
-            Description=finding.description,
+            Description=finding.status_extended,
         )
 
         asff = ASFF(findings=[finding])
@@ -238,8 +248,10 @@ class TestASFF:
             resource_uid="test-arn",
             resource_tags={"key1": "value1"},
         )
-        finding.remediation_recommendation_url = ""
-        finding.remediation_recommendation_text = "x" * 513
+        finding.metadata.Remediation.Recommendation.Url = (
+            "https://hub.prowler.com/check/check-id"
+        )
+        finding.metadata.Remediation.Recommendation.Text = "x" * 513
 
         timestamp = timestamp_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -250,24 +262,26 @@ class TestASFF:
         timestamp = timestamp_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         expected = AWSSecurityFindingFormat(
-            Id=f"prowler-{finding.check_id}-{AWS_ACCOUNT_NUMBER}-{AWS_REGION_EU_WEST_1}-{hash_sha512(finding.resource_uid)}",
+            Id=f"prowler-{finding.metadata.CheckID}-{AWS_ACCOUNT_NUMBER}-{AWS_REGION_EU_WEST_1}-{hash_sha512(finding.resource_uid)}",
             ProductArn=f"arn:{AWS_COMMERCIAL_PARTITION}:securityhub:{AWS_REGION_EU_WEST_1}::product/prowler/prowler",
             ProductFields=ProductFields(
                 ProviderVersion=prowler_version,
                 ProwlerResourceName=finding.resource_uid,
+                ProwlerAccountOrganizationalUnitId=finding.account_ou_uid,
+                ProwlerAccountOrganizationalUnitName=finding.account_ou_name,
             ),
-            GeneratorId="prowler-" + finding.check_id,
+            GeneratorId="prowler-" + finding.metadata.CheckID,
             AwsAccountId=AWS_ACCOUNT_NUMBER,
-            Types=finding.check_type.split(","),
+            Types=finding.metadata.CheckType,
             FirstObservedAt=timestamp,
             UpdatedAt=timestamp,
             CreatedAt=timestamp,
-            Severity=Severity(Label=finding.severity),
-            Title=finding.check_title,
+            Severity=Severity(Label=finding.metadata.Severity.value),
+            Title=finding.metadata.CheckTitle,
             Resources=[
                 Resource(
                     Id=finding.resource_uid,
-                    Type=finding.resource_type,
+                    Type=finding.metadata.ResourceType,
                     Partition=AWS_COMMERCIAL_PARTITION,
                     Region=AWS_REGION_EU_WEST_1,
                     Tags={"key1": "value1"},
@@ -281,10 +295,10 @@ class TestASFF:
             Remediation=Remediation(
                 Recommendation=Recommendation(
                     Text=f"{'x' * 509}...",
-                    Url="https://docs.aws.amazon.com/securityhub/latest/userguide/what-is-securityhub.html",
+                    Url="https://hub.prowler.com/check/check-id",
                 )
             ),
-            Description=finding.description,
+            Description=finding.status_extended,
         )
 
         asff = ASFF(findings=[finding])
@@ -447,6 +461,8 @@ class TestASFF:
                     "si-4-5",
                 ],
                 "FedRAMP-Low-Revision-4": ["ac-2", "au-2", "ca-7"],
+                "KISA-ISMS-P-2023": ["2.6.1"],
+                "KISA-ISMS-P-2023-korean": ["2.6.1"],
             },
         )
 
@@ -457,24 +473,26 @@ class TestASFF:
         )
 
         expected = AWSSecurityFindingFormat(
-            Id=f"prowler-{finding.check_id}-{AWS_ACCOUNT_NUMBER}-{AWS_REGION_EU_WEST_1}-{hash_sha512(finding.resource_uid)}",
+            Id=f"prowler-{finding.metadata.CheckID}-{AWS_ACCOUNT_NUMBER}-{AWS_REGION_EU_WEST_1}-{hash_sha512(finding.resource_uid)}",
             ProductArn=f"arn:{AWS_COMMERCIAL_PARTITION}:securityhub:{AWS_REGION_EU_WEST_1}::product/prowler/prowler",
             ProductFields=ProductFields(
                 ProviderVersion=prowler_version,
                 ProwlerResourceName=finding.resource_uid,
+                ProwlerAccountOrganizationalUnitId=finding.account_ou_uid,
+                ProwlerAccountOrganizationalUnitName=finding.account_ou_name,
             ),
-            GeneratorId="prowler-" + finding.check_id,
+            GeneratorId="prowler-" + finding.metadata.CheckID,
             AwsAccountId=AWS_ACCOUNT_NUMBER,
-            Types=finding.check_type.split(","),
+            Types=finding.metadata.CheckType,
             FirstObservedAt=timestamp,
             UpdatedAt=timestamp,
             CreatedAt=timestamp,
-            Severity=Severity(Label=finding.severity),
-            Title=finding.check_title,
+            Severity=Severity(Label=finding.metadata.Severity.value),
+            Title=finding.metadata.CheckTitle,
             Resources=[
                 Resource(
                     Id=finding.resource_uid,
-                    Type=finding.resource_type,
+                    Type=finding.metadata.ResourceType,
                     Partition=AWS_COMMERCIAL_PARTITION,
                     Region=AWS_REGION_EU_WEST_1,
                     Tags={"key1": "value1"},
@@ -487,11 +505,11 @@ class TestASFF:
             ),
             Remediation=Remediation(
                 Recommendation=Recommendation(
-                    Text=finding.remediation_recommendation_text,
-                    Url=finding.remediation_recommendation_url,
+                    Text=finding.metadata.Remediation.Recommendation.Text,
+                    Url=finding.metadata.Remediation.Recommendation.Url,
                 )
             ),
-            Description=finding.description,
+            Description=finding.status_extended,
         )
 
         asff = ASFF(findings=[finding])
@@ -515,30 +533,36 @@ class TestASFF:
             resource_uid="test-arn",
             resource_tags={"key1": "value1"},
         )
-        finding.remediation_recommendation_url = ""
+        finding.metadata.Remediation.Recommendation.Url = (
+            "https://hub.prowler.com/check/check-id"
+        )
 
         timestamp = timestamp_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         expected_asff = [
             {
                 "SchemaVersion": "2018-10-08",
-                "Id": "prowler-test-check-id-123456789012-eu-west-1-1aa220687",
+                "Id": "prowler-service_test_check_id-123456789012-eu-west-1-1aa220687",
                 "ProductArn": "arn:aws:securityhub:eu-west-1::product/prowler/prowler",
                 "RecordState": "ACTIVE",
                 "ProductFields": {
                     "ProviderName": "Prowler",
                     "ProviderVersion": prowler_version,
                     "ProwlerResourceName": "test-arn",
+                    "ProwlerAccountOrganizationalUnitId": "ou-abc1-12345678",
+                    "ProwlerAccountOrganizationalUnitName": "Production/WebServices",
                 },
-                "GeneratorId": "prowler-test-check-id",
+                "GeneratorId": "prowler-service_test_check_id",
                 "AwsAccountId": "123456789012",
-                "Types": ["test-type"],
+                "Types": [
+                    "Software and Configuration Checks/AWS Security Best Practices/Network Reachability"
+                ],
                 "FirstObservedAt": timestamp,
                 "UpdatedAt": timestamp,
                 "CreatedAt": timestamp,
                 "Severity": {"Label": "HIGH"},
-                "Title": "test-check-id",
-                "Description": "check description",
+                "Title": "service_test_check_id",
+                "Description": "This is a test",
                 "Resources": [
                     {
                         "Type": "test-resource",
@@ -558,7 +582,7 @@ class TestASFF:
                 "Remediation": {
                     "Recommendation": {
                         "Text": "",
-                        "Url": "https://docs.aws.amazon.com/securityhub/latest/userguide/what-is-securityhub.html",
+                        "Url": "https://hub.prowler.com/check/check-id",
                     }
                 },
             }
@@ -575,7 +599,7 @@ class TestASFF:
         assert loads(content) == expected_asff
 
     def test_batch_write_data_to_file_without_findings(self):
-        assert not hasattr(ASFF([]), "_file_descriptor")
+        assert not ASFF([])._file_descriptor
 
     def test_asff_generate_status(self):
         assert ASFF.generate_status("PASS") == "PASSED"

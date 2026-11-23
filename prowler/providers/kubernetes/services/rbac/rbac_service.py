@@ -1,6 +1,6 @@
 from typing import Any, List, Optional
 
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from kubernetes import client
 from prowler.lib.logger import logger
@@ -8,18 +8,17 @@ from prowler.providers.kubernetes.kubernetes_provider import KubernetesProvider
 from prowler.providers.kubernetes.lib.service.service import KubernetesService
 
 
-################## Rbac ##################
 class Rbac(KubernetesService):
     def __init__(self, provider: KubernetesProvider):
         super().__init__(provider)
         self.client = client.RbacAuthorizationV1Api()
 
-        self.cluster_role_bindings = self.__list_cluster_role_bindings__()
-        self.role_bindings = self.__list_role_bindings__()
-        self.cluster_roles = self.__list_cluster_roles__()
-        self.roles = self.__list_roles__()
+        self.cluster_role_bindings = self._list_cluster_role_bindings()
+        self.role_bindings = self._list_role_bindings()
+        self.cluster_roles = self._list_cluster_roles()
+        self.roles = self._list_roles()
 
-    def __list_cluster_role_bindings__(self):
+    def _list_cluster_role_bindings(self):
         try:
             bindings = {}
             for binding in self.client.list_cluster_role_binding().items:
@@ -53,7 +52,7 @@ class Rbac(KubernetesService):
             )
             return {}
 
-    def __list_role_bindings__(self):
+    def _list_role_bindings(self):
         try:
             role_bindings = {}
             for binding in self.client.list_role_binding_for_all_namespaces().items:
@@ -82,7 +81,7 @@ class Rbac(KubernetesService):
             )
             return {}
 
-    def __list_roles__(self):
+    def _list_roles(self):
         try:
             roles = {}
             for role in self.client.list_role_for_all_namespaces().items:
@@ -96,7 +95,7 @@ class Rbac(KubernetesService):
                             "resources": rule.resources,
                             "verbs": rule.verbs,
                         }
-                        for rule in role.rules
+                        for rule in (role.rules or [])
                     ],
                 }
                 roles[role.metadata.uid] = Role(**formatted_role)
@@ -107,7 +106,7 @@ class Rbac(KubernetesService):
             )
             return {}
 
-    def __list_cluster_roles__(self):
+    def _list_cluster_roles(self):
         try:
             cluster_roles = {}
             for role in self.client.list_cluster_role().items:
@@ -163,9 +162,9 @@ class RoleBinding(BaseModel):
 
 
 class Rule(BaseModel):
-    apiGroups: Optional[List[str]]
-    resources: Optional[List[str]]
-    verbs: Optional[List[str]]
+    apiGroups: Optional[List[str]] = None
+    resources: Optional[List[str]] = None
+    verbs: Optional[List[str]] = None
 
 
 class Role(BaseModel):

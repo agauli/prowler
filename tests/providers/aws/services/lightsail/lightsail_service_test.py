@@ -197,7 +197,19 @@ class TestLightsailService:
             lightsail.instances[f"{BASE_LIGHTSAIL_ARN}:Instance/test-id"].name
             == "WordPress-1"
         )
+        assert (
+            lightsail.instances[f"{BASE_LIGHTSAIL_ARN}:Instance/test-id"].arn
+            == f"{BASE_LIGHTSAIL_ARN}:Instance/test-id"
+        )
         assert lightsail.instances[f"{BASE_LIGHTSAIL_ARN}:Instance/test-id"].tags == []
+        assert (
+            lightsail.instances[f"{BASE_LIGHTSAIL_ARN}:Instance/test-id"].blueprint_id
+            == "wordpress"
+        )
+        assert (
+            lightsail.instances[f"{BASE_LIGHTSAIL_ARN}:Instance/test-id"].blueprint_name
+            == "WordPress"
+        )
         assert (
             lightsail.instances[f"{BASE_LIGHTSAIL_ARN}:Instance/test-id"].region
             == AWS_REGION_US_EAST_1
@@ -308,6 +320,10 @@ class TestLightsailService:
             lightsail.databases[f"{BASE_LIGHTSAIL_ARN}:Database/test-id"].name
             == "test-db"
         )
+        assert (
+            lightsail.databases[f"{BASE_LIGHTSAIL_ARN}:Database/test-id"].arn
+            == f"{BASE_LIGHTSAIL_ARN}:Database/test-id"
+        )
         assert lightsail.databases[f"{BASE_LIGHTSAIL_ARN}:Database/test-id"].tags == []
         assert (
             lightsail.databases[f"{BASE_LIGHTSAIL_ARN}:Database/test-id"].region
@@ -349,6 +365,10 @@ class TestLightsailService:
         assert (
             lightsail.static_ips[f"{BASE_LIGHTSAIL_ARN}:StaticIp/test-id"].id
             == "578520385941/ip-0a0f5d4e2b3a4e4f"
+        )
+        assert (
+            lightsail.static_ips[f"{BASE_LIGHTSAIL_ARN}:StaticIp/test-id"].arn
+            == f"{BASE_LIGHTSAIL_ARN}:StaticIp/test-id"
         )
         assert (
             lightsail.static_ips[f"{BASE_LIGHTSAIL_ARN}:StaticIp/test-id"].region

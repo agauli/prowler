@@ -1,13 +1,16 @@
 from argparse import Namespace
+from functools import lru_cache
 from json import dumps
 
+import botocore.session
 from boto3 import client, session
-from botocore.config import Config
+from botocore.validate import ParamValidator
 from moto import mock_aws
 
 from prowler.config.config import (
     default_config_file_path,
     default_fixer_config_file_path,
+    get_default_mute_file_path,
 )
 from prowler.providers.aws.aws_provider import AwsProvider
 from prowler.providers.common.models import Audit_Metadata
@@ -16,7 +19,9 @@ from prowler.providers.common.models import Audit_Metadata
 AWS_COMMERCIAL_PARTITION = "aws"
 AWS_GOV_CLOUD_PARTITION = "aws-us-gov"
 AWS_CHINA_PARTITION = "aws-cn"
+AWS_EUSC_PARTITION = "aws-eusc"
 AWS_ISO_PARTITION = "aws-iso"
+AWS_ISO_B_PARTITION = "aws-iso-b"
 
 # Root AWS Account
 AWS_ACCOUNT_NUMBER = "123456789012"
@@ -47,9 +52,15 @@ AWS_REGION_CN_NORTH_1 = "cn-north-1"
 
 # Gov Cloud Regions
 AWS_REGION_GOV_CLOUD_US_EAST_1 = "us-gov-east-1"
+AWS_REGION_GOV_CLOUD_US_WEST_1 = "us-gov-west-1"
 
 # Iso Regions
-AWS_REGION_ISO_GLOBAL = "aws-iso-global"
+AWS_REGION_ISO_EAST_1 = "us-iso-east-1"
+AWS_REGION_ISO_WEST_1 = "us-iso-west-1"
+AWS_REGION_ISO_B_EAST_1 = "us-isob-east-1"
+
+# European Sovereign Cloud Regions
+AWS_REGION_EUSC_DE_EAST_1 = "eusc-de-east-1"
 
 # EC2
 EXAMPLE_AMI_ID = "ami-12c6146b"
@@ -91,7 +102,7 @@ ADMINISTRATOR_ROLE_ASSUME_ROLE_POLICY = {
 # This here causes to call this function mocking the AWS calls
 @mock_aws
 def set_mocked_aws_provider(
-    audited_regions: list[str] = [],
+    audited_regions: list[str] = [AWS_REGION_US_EAST_1],
     audited_account: str = AWS_ACCOUNT_NUMBER,
     audited_account_arn: str = AWS_ACCOUNT_ARN,
     audited_partition: str = AWS_COMMERCIAL_PARTITION,
@@ -99,6 +110,7 @@ def set_mocked_aws_provider(
     profile_region: str = None,
     audit_config: dict = {},
     fixer_config: dict = {},
+    mutelist: dict = None,
     scan_unused_services: bool = True,
     audit_session: session.Session = session.Session(
         profile_name=None,
@@ -110,6 +122,12 @@ def set_mocked_aws_provider(
     status: list[str] = [],
     create_default_organization: bool = True,
 ) -> AwsProvider:
+    if audited_regions is None:
+        raise ValueError(
+            "audited_regions is None, which means all 36 regions will be used. "
+            "Pass an explicit list of regions instead."
+        )
+
     if create_default_organization:
         # Create default AWS Organization
         create_default_aws_organization()
@@ -118,17 +136,14 @@ def set_mocked_aws_provider(
     arguments = set_default_provider_arguments(arguments, status)
 
     # AWS Provider
-    provider = AwsProvider(arguments)
-
-    # Output options
-
-    provider.output_options = arguments, {}
+    provider = AwsProvider()
 
     # Mock Session
-    provider._session.session_config = None
+    session_config = AwsProvider.set_session_config(None)
+    provider._session.session_config = session_config
     provider._session.original_session = original_session
     provider._session.current_session = audit_session
-    provider._session.session_config = Config()
+    audit_session._session.set_default_client_config(session_config)
     # Mock Identity
     provider._identity.account = audited_account
     provider._identity.account_arn = audited_account_arn
@@ -141,13 +156,16 @@ def set_mocked_aws_provider(
     # Mock Configiration
     provider._scan_unused_services = scan_unused_services
     provider._enabled_regions = (
-        enabled_regions if enabled_regions else set(audited_regions)
+        enabled_regions
+        if enabled_regions is not None
+        else (set(audited_regions) if audited_regions else None)
     )
     # TODO: we can create the organizations metadata here with moto
     provider._organizations_metadata = None
     provider._audit_resources = []
     provider._audit_config = audit_config
     provider._fixer_config = fixer_config
+    provider._mutelist = mutelist
     provider.audit_metadata = Audit_Metadata(
         services_scanned=0,
         expected_checks=expected_checks,
@@ -172,6 +190,7 @@ def set_default_provider_arguments(
     arguments.send_sh_only_fails = False
     arguments.config_file = default_config_file_path
     arguments.fixer_config = default_fixer_config_file_path
+    arguments.mutelist_file = get_default_mute_file_path("aws")
 
     return arguments
 
@@ -185,7 +204,13 @@ def create_default_aws_organization():
     mockdomain = "moto-example.org"
     mockemail = "@".join([mockname, mockdomain])
 
-    _ = organizations_client.create_organization(FeatureSet="ALL")["Organization"]["Id"]
+    try:
+        _ = organizations_client.create_organization(FeatureSet="ALL")["Organization"][
+            "Id"
+        ]
+    except organizations_client.exceptions.AlreadyInOrganizationException:
+        return
+
     account_id = organizations_client.create_account(
         AccountName=mockname, Email=mockemail
     )["CreateAccountStatus"]["AccountId"]
@@ -217,3 +242,38 @@ def create_role(
         PolicyArn=policy["Arn"],
     )
     return administrator_role["Arn"]
+
+
+@lru_cache(maxsize=None)
+def _service_model(service_name: str):
+    return botocore.session.get_session().get_service_model(service_name)
+
+
+def mocked_api_response(service_name: str, operation_name: str, response: dict) -> dict:
+    """Validate a hand-written mocked response against the real AWS API model.
+
+    Responses returned from a `botocore.client.BaseClient._make_api_call` mock are
+    not validated by botocore, so a mock can return fields that the API never
+    sends and the test will still pass. Wrapping the response with this helper
+    turns that silent mismatch into a test failure.
+
+    Args:
+        service_name: Boto3 service name, e.g. `securityhub`.
+        operation_name: API operation name in PascalCase, e.g. `DescribeHub`.
+        response: The mocked response to validate and return.
+
+    Returns:
+        The response, unchanged.
+
+    Raises:
+        AssertionError: If the response does not match the operation output shape.
+    """
+    output_shape = (
+        _service_model(service_name).operation_model(operation_name).output_shape
+    )
+    report = ParamValidator().validate(response, output_shape)
+    assert not report.has_errors(), (
+        f"Mocked {service_name}:{operation_name} response does not match the API "
+        f"model: {report.generate_report()}"
+    )
+    return response

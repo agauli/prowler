@@ -1,22 +1,21 @@
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
 
-################## AppStream
 class AppStream(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
         super().__init__(__class__.__name__, provider)
         self.fleets = []
-        self.__threading_call__(self.__describe_fleets__)
-        self.__list_tags_for_resource__()
+        self.__threading_call__(self._describe_fleets)
+        self._list_tags_for_resource()
 
-    def __describe_fleets__(self, regional_client):
+    def _describe_fleets(self, regional_client):
         logger.info("AppStream - Describing Fleets...")
         try:
             describe_fleets_paginator = regional_client.get_paginator("describe_fleets")
@@ -50,7 +49,7 @@ class AppStream(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_tags_for_resource__(self):
+    def _list_tags_for_resource(self):
         logger.info("AppStream - List Tags...")
         try:
             for fleet in self.fleets:

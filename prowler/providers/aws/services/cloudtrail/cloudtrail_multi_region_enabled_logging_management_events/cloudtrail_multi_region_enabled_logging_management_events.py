@@ -9,14 +9,14 @@ class cloudtrail_multi_region_enabled_logging_management_events(Check):
         findings = []
         if cloudtrail_client.trails is not None:
             for region in cloudtrail_client.regional_clients.keys():
-                report = Check_Report_AWS(self.metadata())
+                report = Check_Report_AWS(
+                    metadata=self.metadata(), resource=cloudtrail_client.trails
+                )
                 report.status = "FAIL"
                 report.status_extended = "No CloudTrail trails enabled and logging management events were found."
                 report.region = region
                 report.resource_id = cloudtrail_client.audited_account
-                report.resource_arn = cloudtrail_client.__get_trail_arn_template__(
-                    region
-                )
+                report.resource_arn = cloudtrail_client._get_trail_arn_template(region)
                 trail_is_logging_management_events = False
                 for trail in cloudtrail_client.trails.values():
                     if trail.region == region or trail.is_multiregion:
@@ -47,10 +47,10 @@ class cloudtrail_multi_region_enabled_logging_management_events(Check):
                                     ):
                                         trail_is_logging_management_events = True
                     if trail_is_logging_management_events:
-                        report.resource_id = trail.name
-                        report.resource_arn = trail.arn
-                        report.resource_tags = trail.tags
-                        report.region = trail.home_region
+                        report = Check_Report_AWS(
+                            metadata=self.metadata(), resource=trail
+                        )
+                        report.region = region
                         report.status = "PASS"
                         if trail.is_multiregion:
                             report.status_extended = f"Trail {trail.name} from home region {trail.home_region} is multi-region, is logging and have management events enabled."

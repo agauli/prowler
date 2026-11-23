@@ -1,17 +1,21 @@
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from prowler.providers.azure.models import AzureRegionConfig
 from prowler.providers.azure.services.defender.defender_service import (
     Assesment,
     AutoProvisioningSetting,
     Defender,
     IoTSecuritySolution,
+    JITPolicy,
     Pricing,
-    SecurityContacts,
+    SecurityContactConfiguration,
     Setting,
 )
 from tests.providers.azure.azure_fixtures import (
     AZURE_SUBSCRIPTION_ID,
+    RESOURCE_GROUP,
+    RESOURCE_GROUP_LIST,
     set_mocked_azure_provider,
 )
 
@@ -21,6 +25,7 @@ def mock_defender_get_pricings(_):
         AZURE_SUBSCRIPTION_ID: {
             "Standard": Pricing(
                 resource_id="resource_id",
+                resource_name="resource_name",
                 pricing_tier="pricing_tier",
                 free_trial_remaining_time=timedelta(days=1),
                 extensions={},
@@ -54,17 +59,24 @@ def mock_defender_get_assessments(_):
     }
 
 
-def mock_defender_get_security_contacts(_):
+def mock_defender_get_security_contacts(*_args, **_kwargs):
+    from prowler.providers.azure.services.defender.defender_service import (
+        NotificationsByRole,
+    )
+
     return {
         AZURE_SUBSCRIPTION_ID: {
-            "default": SecurityContacts(
-                resource_id="/subscriptions/resource_id",
-                emails="user@user.com, test@test.es",
+            "/subscriptions/resource_id": SecurityContactConfiguration(
+                id="/subscriptions/resource_id",
+                name="default",
+                enabled=True,
+                emails=["user@user.com", "test@test.es"],
                 phone="666666666",
-                alert_notifications_minimal_severity="High",
-                alert_notifications_state="On",
-                notified_roles=["Owner", "Contributor"],
-                notified_roles_state="On",
+                notifications_by_role=NotificationsByRole(
+                    state=True, roles=["Owner", "Contributor"]
+                ),
+                alert_minimal_severity="High",
+                attack_path_minimal_risk_level=None,
             )
         }
     }
@@ -75,6 +87,7 @@ def mock_defender_get_settings(_):
         AZURE_SUBSCRIPTION_ID: {
             "MCAS": Setting(
                 resource_id="/subscriptions/resource_id",
+                resource_name="MCAS",
                 resource_type="Microsoft.Security/locations/settings",
                 kind="DataExportSettings",
                 enabled=True,
@@ -86,40 +99,58 @@ def mock_defender_get_settings(_):
 def mock_defender_get_iot_security_solutions(_):
     return {
         AZURE_SUBSCRIPTION_ID: {
-            "iot_sec_solution": IoTSecuritySolution(
+            "/subscriptions/resource_id": IoTSecuritySolution(
                 resource_id="/subscriptions/resource_id",
+                name="iot_sec_solution",
                 status="Enabled",
             )
         }
     }
 
 
+def mock_defender_get_jit_policies(_):
+    return {
+        AZURE_SUBSCRIPTION_ID: {
+            "policy-1": JITPolicy(
+                id="policy-1",
+                name="JITPolicy1",
+                location="eastus",
+                vm_ids=["vm-1", "vm-2"],
+            )
+        }
+    }
+
+
 @patch(
-    "prowler.providers.azure.services.defender.defender_service.Defender.__get_pricings__",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_pricings",
     new=mock_defender_get_pricings,
 )
 @patch(
-    "prowler.providers.azure.services.defender.defender_service.Defender.__get_auto_provisioning_settings__",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_auto_provisioning_settings",
     new=mock_defender_get_auto_provisioning_settings,
 )
 @patch(
-    "prowler.providers.azure.services.defender.defender_service.Defender.__get_assessments__",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_assessments",
     new=mock_defender_get_assessments,
 )
 @patch(
-    "prowler.providers.azure.services.defender.defender_service.Defender.__get_settings__",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_settings",
     new=mock_defender_get_settings,
 )
 @patch(
-    "prowler.providers.azure.services.defender.defender_service.Defender.__get_security_contacts__",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_security_contacts",
     new=mock_defender_get_security_contacts,
 )
 @patch(
-    "prowler.providers.azure.services.defender.defender_service.Defender.__get_iot_security_solutions__",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_iot_security_solutions",
     new=mock_defender_get_iot_security_solutions,
 )
+@patch(
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_jit_policies",
+    new=mock_defender_get_jit_policies,
+)
 class Test_Defender_Service:
-    def test__get_client__(self):
+    def test_get_client(self):
         defender = Defender(set_mocked_azure_provider())
         assert (
             defender.clients[AZURE_SUBSCRIPTION_ID].__class__.__name__
@@ -131,12 +162,16 @@ class Test_Defender_Service:
         defender = Defender(set_mocked_azure_provider())
         assert defender.subscriptions.__class__.__name__ == "dict"
 
-    def test__get_pricings__(self):
+    def test_get_pricings(self):
         defender = Defender(set_mocked_azure_provider())
         assert len(defender.pricings) == 1
         assert (
             defender.pricings[AZURE_SUBSCRIPTION_ID]["Standard"].resource_id
             == "resource_id"
+        )
+        assert (
+            defender.pricings[AZURE_SUBSCRIPTION_ID]["Standard"].resource_name
+            == "resource_name"
         )
         assert (
             defender.pricings[AZURE_SUBSCRIPTION_ID]["Standard"].pricing_tier
@@ -147,7 +182,7 @@ class Test_Defender_Service:
         ].free_trial_remaining_time == timedelta(days=1)
         assert defender.pricings[AZURE_SUBSCRIPTION_ID]["Standard"].extensions == {}
 
-    def test__get_auto_provisioning_settings__(self):
+    def test_get_auto_provisioning_settings(self):
         defender = Defender(set_mocked_azure_provider())
         assert len(defender.auto_provisioning_settings) == 1
         assert (
@@ -175,7 +210,7 @@ class Test_Defender_Service:
             == "On"
         )
 
-    def test__get_assessments__(self):
+    def test_get_assessments(self):
         defender = Defender(set_mocked_azure_provider())
         assert len(defender.assessments) == 1
         assert (
@@ -190,7 +225,7 @@ class Test_Defender_Service:
             defender.assessments[AZURE_SUBSCRIPTION_ID]["default"].status == "Healthy"
         )
 
-    def test__get_settings__(self):
+    def test_get_settings(self):
         defender = Defender(set_mocked_azure_provider())
         assert len(defender.settings) == 1
         assert (
@@ -207,55 +242,430 @@ class Test_Defender_Service:
         )
         assert defender.settings[AZURE_SUBSCRIPTION_ID]["MCAS"].enabled
 
-    def test__get_security_contacts__(self):
+    def test_get_security_contacts(self):
         defender = Defender(set_mocked_azure_provider())
-        assert len(defender.security_contacts) == 1
-        assert (
-            defender.security_contacts[AZURE_SUBSCRIPTION_ID]["default"].resource_id
-            == "/subscriptions/resource_id"
-        )
-        assert (
-            defender.security_contacts[AZURE_SUBSCRIPTION_ID]["default"].emails
-            == "user@user.com, test@test.es"
-        )
-        assert (
-            defender.security_contacts[AZURE_SUBSCRIPTION_ID]["default"].phone
-            == "666666666"
-        )
-        assert (
-            defender.security_contacts[AZURE_SUBSCRIPTION_ID][
-                "default"
-            ].alert_notifications_minimal_severity
-            == "High"
-        )
-        assert (
-            defender.security_contacts[AZURE_SUBSCRIPTION_ID][
-                "default"
-            ].alert_notifications_state
-            == "On"
-        )
-        assert defender.security_contacts[AZURE_SUBSCRIPTION_ID][
-            "default"
-        ].notified_roles == ["Owner", "Contributor"]
-        assert (
-            defender.security_contacts[AZURE_SUBSCRIPTION_ID][
-                "default"
-            ].notified_roles_state
-            == "On"
-        )
+        assert len(defender.security_contact_configurations) == 1
+        contact = defender.security_contact_configurations[AZURE_SUBSCRIPTION_ID][
+            "/subscriptions/resource_id"
+        ]
+        assert contact.id == "/subscriptions/resource_id"
+        assert contact.name == "default"
+        assert contact.emails == ["user@user.com", "test@test.es"]
+        assert contact.phone == "666666666"
+        assert contact.alert_minimal_severity == "High"
+        assert contact.notifications_by_role.state is True
+        assert contact.notifications_by_role.roles == ["Owner", "Contributor"]
 
-    def test__get_iot_security_solutions__(self):
+    def test_get_iot_security_solutions(self):
         defender = Defender(set_mocked_azure_provider())
         assert len(defender.iot_security_solutions) == 1
         assert (
             defender.iot_security_solutions[AZURE_SUBSCRIPTION_ID][
-                "iot_sec_solution"
+                "/subscriptions/resource_id"
             ].resource_id
             == "/subscriptions/resource_id"
         )
         assert (
             defender.iot_security_solutions[AZURE_SUBSCRIPTION_ID][
-                "iot_sec_solution"
+                "/subscriptions/resource_id"
+            ].name
+            == "iot_sec_solution"
+        )
+        assert (
+            defender.iot_security_solutions[AZURE_SUBSCRIPTION_ID][
+                "/subscriptions/resource_id"
             ].status
             == "Enabled"
         )
+
+    def test_get_jit_policies(self):
+        defender = Defender(set_mocked_azure_provider())
+        assert AZURE_SUBSCRIPTION_ID in defender.jit_policies
+        assert "policy-1" in defender.jit_policies[AZURE_SUBSCRIPTION_ID]
+        policy1 = defender.jit_policies[AZURE_SUBSCRIPTION_ID]["policy-1"]
+        assert policy1.id == "policy-1"
+        assert policy1.name == "JITPolicy1"
+        assert policy1.location == "eastus"
+        assert set(policy1.vm_ids) == {"vm-1", "vm-2"}
+
+
+def mock_defender_get_assessments_with_none(_):
+    """Mock Defender assessments with None and valid statuses"""
+    return {
+        AZURE_SUBSCRIPTION_ID: {
+            "Assessment None": Assesment(
+                resource_id="/subscriptions/test/assessment1",
+                resource_name="assessment-none",
+                status=None,  # None status
+            ),
+            "Assessment Healthy": Assesment(
+                resource_id="/subscriptions/test/assessment2",
+                resource_name="assessment-healthy",
+                status="Healthy",
+            ),
+            "Assessment Unhealthy": Assesment(
+                resource_id="/subscriptions/test/assessment3",
+                resource_name="assessment-unhealthy",
+                status="Unhealthy",
+            ),
+        }
+    }
+
+
+@patch(
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_assessments",
+    new=mock_defender_get_assessments_with_none,
+)
+class Test_Defender_Service_Assessments_None_Handling:
+    """Test Defender service handling of None values in assessments"""
+
+    def test_assessment_with_none_status(self):
+        """Test that Defender handles assessments with None status gracefully"""
+        defender = Defender(set_mocked_azure_provider())
+
+        # Check assessment with None status
+        assessment = defender.assessments[AZURE_SUBSCRIPTION_ID]["Assessment None"]
+        assert assessment.resource_id == "/subscriptions/test/assessment1"
+        assert assessment.resource_name == "assessment-none"
+        assert assessment.status is None
+
+    def test_assessment_with_valid_status(self):
+        """Test that Defender handles assessments with valid status"""
+        defender = Defender(set_mocked_azure_provider())
+
+        # Check assessment with Healthy status
+        assessment = defender.assessments[AZURE_SUBSCRIPTION_ID]["Assessment Healthy"]
+        assert assessment.resource_id == "/subscriptions/test/assessment2"
+        assert assessment.resource_name == "assessment-healthy"
+        assert assessment.status == "Healthy"
+
+    def test_assessment_with_multiple_mixed_statuses(self):
+        """Test that Defender handles mix of None and valid statuses"""
+        defender = Defender(set_mocked_azure_provider())
+
+        # Should have all 3 assessments
+        assert len(defender.assessments[AZURE_SUBSCRIPTION_ID]) == 3
+
+        # Check None status
+        assessment_none = defender.assessments[AZURE_SUBSCRIPTION_ID]["Assessment None"]
+        assert assessment_none.status is None
+
+        # Check Healthy status
+        assessment_healthy = defender.assessments[AZURE_SUBSCRIPTION_ID][
+            "Assessment Healthy"
+        ]
+        assert assessment_healthy.status == "Healthy"
+
+        # Check Unhealthy status
+        assessment_unhealthy = defender.assessments[AZURE_SUBSCRIPTION_ID][
+            "Assessment Unhealthy"
+        ]
+        assert assessment_unhealthy.status == "Unhealthy"
+
+
+DEFENDER_INIT_PATCHES = [
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_pricings",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_auto_provisioning_settings",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_assessments",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_settings",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_security_contacts",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_iot_security_solutions",
+    "prowler.providers.azure.services.defender.defender_service.Defender._get_jit_policies",
+]
+
+
+class Test_Defender_get_iot_security_solutions:
+    def test_get_iot_security_solutions_no_resource_groups(self):
+        mock_client = MagicMock()
+        mock_client.iot_security_solution.list_by_subscription.return_value = []
+
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            defender = Defender(set_mocked_azure_provider())
+
+        defender.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        defender.resource_groups = None
+
+        result = defender._get_iot_security_solutions()
+
+        mock_client.iot_security_solution.list_by_subscription.assert_called_once()
+        mock_client.iot_security_solution.list_by_resource_group.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_iot_security_solutions_with_resource_group(self):
+        mock_client = MagicMock()
+        mock_client.iot_security_solution.list_by_resource_group.return_value = []
+
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            defender = Defender(set_mocked_azure_provider())
+
+        defender.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        defender.resource_groups = {AZURE_SUBSCRIPTION_ID: [RESOURCE_GROUP]}
+
+        result = defender._get_iot_security_solutions()
+
+        mock_client.iot_security_solution.list_by_resource_group.assert_called_once_with(
+            resource_group_name=RESOURCE_GROUP
+        )
+        mock_client.iot_security_solution.list_by_subscription.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_iot_security_solutions_empty_resource_group_for_subscription(self):
+        mock_client = MagicMock()
+
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            defender = Defender(set_mocked_azure_provider())
+
+        defender.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        defender.resource_groups = {AZURE_SUBSCRIPTION_ID: []}
+
+        result = defender._get_iot_security_solutions()
+
+        mock_client.iot_security_solution.list_by_resource_group.assert_not_called()
+        mock_client.iot_security_solution.list_by_subscription.assert_not_called()
+        assert result[AZURE_SUBSCRIPTION_ID] == {}
+
+    def test_get_iot_security_solutions_with_multiple_resource_groups(self):
+        mock_client = MagicMock()
+        mock_client.iot_security_solution.list_by_resource_group.return_value = []
+
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            defender = Defender(set_mocked_azure_provider())
+
+        defender.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        defender.resource_groups = {AZURE_SUBSCRIPTION_ID: RESOURCE_GROUP_LIST}
+
+        result = defender._get_iot_security_solutions()
+
+        assert mock_client.iot_security_solution.list_by_resource_group.call_count == 2
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_iot_security_solutions_with_mixed_case_resource_group(self):
+        mock_client = MagicMock()
+        mock_client.iot_security_solution.list_by_resource_group.return_value = []
+
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            defender = Defender(set_mocked_azure_provider())
+
+        defender.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        defender.resource_groups = {AZURE_SUBSCRIPTION_ID: ["RG"]}
+
+        defender._get_iot_security_solutions()
+
+        mock_client.iot_security_solution.list_by_resource_group.assert_called_once_with(
+            resource_group_name="RG"
+        )
+
+
+class Test_Defender_get_jit_policies:
+    def test_get_jit_policies_no_resource_groups(self):
+        mock_client = MagicMock()
+        mock_client.jit_network_access_policies.list.return_value = []
+
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            defender = Defender(set_mocked_azure_provider())
+
+        defender.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        defender.resource_groups = None
+
+        result = defender._get_jit_policies()
+
+        mock_client.jit_network_access_policies.list.assert_called_once()
+        mock_client.jit_network_access_policies.list_by_resource_group.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_jit_policies_with_resource_group(self):
+        mock_client = MagicMock()
+        mock_client.jit_network_access_policies.list_by_resource_group.return_value = []
+
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            defender = Defender(set_mocked_azure_provider())
+
+        defender.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        defender.resource_groups = {AZURE_SUBSCRIPTION_ID: [RESOURCE_GROUP]}
+
+        result = defender._get_jit_policies()
+
+        mock_client.jit_network_access_policies.list_by_resource_group.assert_called_once_with(
+            resource_group_name=RESOURCE_GROUP
+        )
+        mock_client.jit_network_access_policies.list.assert_not_called()
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_jit_policies_empty_resource_group_for_subscription(self):
+        mock_client = MagicMock()
+
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            defender = Defender(set_mocked_azure_provider())
+
+        defender.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        defender.resource_groups = {AZURE_SUBSCRIPTION_ID: []}
+
+        result = defender._get_jit_policies()
+
+        mock_client.jit_network_access_policies.list_by_resource_group.assert_not_called()
+        mock_client.jit_network_access_policies.list.assert_not_called()
+        assert result[AZURE_SUBSCRIPTION_ID] == {}
+
+    def test_get_jit_policies_with_multiple_resource_groups(self):
+        mock_client = MagicMock()
+        mock_client.jit_network_access_policies.list_by_resource_group.return_value = []
+
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            defender = Defender(set_mocked_azure_provider())
+
+        defender.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        defender.resource_groups = {AZURE_SUBSCRIPTION_ID: RESOURCE_GROUP_LIST}
+
+        result = defender._get_jit_policies()
+
+        assert (
+            mock_client.jit_network_access_policies.list_by_resource_group.call_count
+            == 2
+        )
+        assert AZURE_SUBSCRIPTION_ID in result
+
+    def test_get_jit_policies_with_mixed_case_resource_group(self):
+        mock_client = MagicMock()
+        mock_client.jit_network_access_policies.list_by_resource_group.return_value = []
+
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            defender = Defender(set_mocked_azure_provider())
+
+        defender.clients = {AZURE_SUBSCRIPTION_ID: mock_client}
+        defender.resource_groups = {AZURE_SUBSCRIPTION_ID: ["RG"]}
+
+        defender._get_jit_policies()
+
+        mock_client.jit_network_access_policies.list_by_resource_group.assert_called_once_with(
+            resource_group_name="RG"
+        )
+
+
+US_GOV_REGION_CONFIG = AzureRegionConfig(
+    name="AzureUSGovernment",
+    base_url="https://management.usgovcloudapi.net",
+    credential_scopes=["https://management.usgovcloudapi.net/.default"],
+)
+
+
+class Test_Defender_get_security_contacts_sovereign_cloud:
+    def _defender(self, provider):
+        with (
+            patch(DEFENDER_INIT_PATCHES[0], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[1], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[2], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[3], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[4], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[5], return_value={}),
+            patch(DEFENDER_INIT_PATCHES[6], return_value={}),
+        ):
+            return Defender(provider)
+
+    def test_init_requests_token_for_cloud_scope(self):
+        provider = set_mocked_azure_provider(azure_region_config=US_GOV_REGION_CONFIG)
+
+        self._defender(provider)
+
+        provider.session.get_token.assert_called_once_with(
+            "https://management.usgovcloudapi.net/.default"
+        )
+
+    def test_get_security_contacts_uses_cloud_management_host(self):
+        provider = set_mocked_azure_provider(azure_region_config=US_GOV_REGION_CONFIG)
+        defender = self._defender(provider)
+
+        response = MagicMock()
+        response.json.return_value = {"value": []}
+        with patch(
+            "prowler.providers.azure.services.defender.defender_service.requests.get",
+            return_value=response,
+        ) as mock_get:
+            result = defender._get_security_contacts(token="token")
+
+        assert result == {AZURE_SUBSCRIPTION_ID: {}}
+        mock_get.assert_called_once()
+        url = mock_get.call_args.args[0]
+        assert url.startswith(
+            f"https://management.usgovcloudapi.net/subscriptions/{AZURE_SUBSCRIPTION_ID}/"
+        )
+        assert "management.azure.com" not in url

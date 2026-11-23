@@ -2,7 +2,9 @@ from unittest import mock
 from uuid import uuid4
 
 from tests.providers.azure.azure_fixtures import (
+    AZURE_SUBSCRIPTION_DISPLAY,
     AZURE_SUBSCRIPTION_ID,
+    AZURE_SUBSCRIPTION_NAME,
     set_mocked_azure_provider,
 )
 
@@ -10,13 +12,17 @@ from tests.providers.azure.azure_fixtures import (
 class Test_app_function_not_publicly_accessible:
     def test_app_no_subscriptions(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible import (
                 app_function_not_publicly_accessible,
@@ -30,13 +36,17 @@ class Test_app_function_not_publicly_accessible:
 
     def test_app_subscription_empty(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible import (
                 app_function_not_publicly_accessible,
@@ -50,13 +60,17 @@ class Test_app_function_not_publicly_accessible:
 
     def test_app_function_not_publicly_accessible(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible import (
                 app_function_not_publicly_accessible,
@@ -68,11 +82,12 @@ class Test_app_function_not_publicly_accessible:
             app_client.functions = {
                 AZURE_SUBSCRIPTION_ID: {
                     function_id: FunctionApp(
+                        id=function_id,
                         name="function1",
                         location="West Europe",
                         kind="functionapp,linux",
                         function_keys={},
-                        enviroment_variables={},
+                        environment_variables={},
                         identity=mock.MagicMock(type="SystemAssigned"),
                         public_access=False,
                         vnet_subnet_id=None,
@@ -87,7 +102,7 @@ class Test_app_function_not_publicly_accessible:
             assert result[0].status == "PASS"
             assert (
                 result[0].status_extended
-                == "Function function1 is not publicly accessible."
+                == f"Function function1 from subscription {AZURE_SUBSCRIPTION_DISPLAY} is not publicly accessible."
             )
             assert result[0].resource_name == "function1"
             assert result[0].resource_id == function_id
@@ -96,13 +111,17 @@ class Test_app_function_not_publicly_accessible:
 
     def test_app_function_publicly_accessible(self):
         app_client = mock.MagicMock
+        app_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible.app_client",
-            new=app_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible.app_client",
+                new=app_client,
+            ),
         ):
             from prowler.providers.azure.services.app.app_function_not_publicly_accessible.app_function_not_publicly_accessible import (
                 app_function_not_publicly_accessible,
@@ -114,11 +133,12 @@ class Test_app_function_not_publicly_accessible:
             app_client.functions = {
                 AZURE_SUBSCRIPTION_ID: {
                     function_id: FunctionApp(
+                        id=function_id,
                         name="function1",
                         location="West Europe",
                         kind="functionapp,linux",
                         function_keys={},
-                        enviroment_variables={},
+                        environment_variables={},
                         identity=mock.MagicMock(type="SystemAssigned"),
                         public_access=True,
                         vnet_subnet_id=None,
@@ -133,7 +153,7 @@ class Test_app_function_not_publicly_accessible:
             assert result[0].status == "FAIL"
             assert (
                 result[0].status_extended
-                == "Function function1 is publicly accessible."
+                == f"Function function1 from subscription {AZURE_SUBSCRIPTION_DISPLAY} is publicly accessible."
             )
             assert result[0].resource_name == "function1"
             assert result[0].resource_id == function_id

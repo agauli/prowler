@@ -15,13 +15,13 @@ POLICY_ARN = "arn:aws:network-firewall:us-east-1:123456789012:firewall-policy/my
 
 class Test_networkfirewall_in_all_vpc:
     def test_no_vpcs(self):
-        networkfirewall_client = mock.MagicMock
+        networkfirewall_client = mock.MagicMock()
         networkfirewall_client.provider = set_mocked_aws_provider(
             [AWS_REGION_US_EAST_1]
         )
         networkfirewall_client.region = AWS_REGION_US_EAST_1
-        networkfirewall_client.network_firewalls = []
-        vpc_client = mock.MagicMock
+        networkfirewall_client.network_firewalls = {}
+        vpc_client = mock.MagicMock()
         vpc_client.provider = set_mocked_aws_provider([AWS_REGION_US_EAST_1])
         vpc_client.region = AWS_REGION_US_EAST_1
         vpc_client.vpcs = {}
@@ -51,13 +51,13 @@ class Test_networkfirewall_in_all_vpc:
                     assert len(result) == 0
 
     def test_vpcs_with_firewall_all(self):
-        networkfirewall_client = mock.MagicMock
+        networkfirewall_client = mock.MagicMock()
         networkfirewall_client.provider = set_mocked_aws_provider(
             [AWS_REGION_US_EAST_1]
         )
         networkfirewall_client.region = AWS_REGION_US_EAST_1
-        networkfirewall_client.network_firewalls = [
-            Firewall(
+        networkfirewall_client.network_firewalls = {
+            FIREWALL_ARN: Firewall(
                 arn=FIREWALL_ARN,
                 name=FIREWALL_NAME,
                 region=AWS_REGION_US_EAST_1,
@@ -67,8 +67,8 @@ class Test_networkfirewall_in_all_vpc:
                 encryption_type="CUSTOMER_KMS",
                 deletion_protection=True,
             )
-        ]
-        vpc_client = mock.MagicMock
+        }
+        vpc_client = mock.MagicMock()
         vpc_client.provider = set_mocked_aws_provider([AWS_REGION_US_EAST_1])
         vpc_client.region = AWS_REGION_US_EAST_1
         vpc_client.vpcs = {
@@ -134,13 +134,13 @@ class Test_networkfirewall_in_all_vpc:
                     assert result[0].resource_arn == "arn_test"
 
     def test_vpcs_without_firewall(self):
-        networkfirewall_client = mock.MagicMock
+        networkfirewall_client = mock.MagicMock()
         networkfirewall_client.provider = set_mocked_aws_provider(
             [AWS_REGION_US_EAST_1]
         )
         networkfirewall_client.region = AWS_REGION_US_EAST_1
-        networkfirewall_client.network_firewalls = []
-        vpc_client = mock.MagicMock
+        networkfirewall_client.network_firewalls = {}
+        vpc_client = mock.MagicMock()
         vpc_client.provider = set_mocked_aws_provider([AWS_REGION_US_EAST_1])
         vpc_client.region = AWS_REGION_US_EAST_1
         vpc_client.vpcs = {
@@ -206,14 +206,14 @@ class Test_networkfirewall_in_all_vpc:
                     assert result[0].resource_arn == "arn_test"
 
     def test_vpcs_with_name_without_firewall(self):
-        networkfirewall_client = mock.MagicMock
+        networkfirewall_client = mock.MagicMock()
         networkfirewall_client.provider = set_mocked_aws_provider(
             [AWS_REGION_US_EAST_1]
         )
         networkfirewall_client.region = AWS_REGION_US_EAST_1
-        networkfirewall_client.network_firewalls = []
+        networkfirewall_client.network_firewalls = {}
 
-        vpc_client = mock.MagicMock
+        vpc_client = mock.MagicMock()
         vpc_client.provider = set_mocked_aws_provider([AWS_REGION_US_EAST_1])
         vpc_client.region = AWS_REGION_US_EAST_1
         vpc_client.vpcs = {
@@ -279,13 +279,13 @@ class Test_networkfirewall_in_all_vpc:
                     assert result[0].resource_arn == "arn_test"
 
     def test_vpcs_with_and_without_firewall(self):
-        networkfirewall_client = mock.MagicMock
+        networkfirewall_client = mock.MagicMock()
         networkfirewall_client.provider = set_mocked_aws_provider(
             [AWS_REGION_US_EAST_1]
         )
         networkfirewall_client.region = AWS_REGION_US_EAST_1
-        networkfirewall_client.network_firewalls = [
-            Firewall(
+        networkfirewall_client.network_firewalls = {
+            FIREWALL_ARN: Firewall(
                 arn=FIREWALL_ARN,
                 name=FIREWALL_NAME,
                 region=AWS_REGION_US_EAST_1,
@@ -295,8 +295,8 @@ class Test_networkfirewall_in_all_vpc:
                 encryption_type="CUSTOMER_KMS",
                 deletion_protection=True,
             )
-        ]
-        vpc_client = mock.MagicMock
+        }
+        vpc_client = mock.MagicMock()
         vpc_client.provider = set_mocked_aws_provider([AWS_REGION_US_EAST_1])
         vpc_client.region = AWS_REGION_US_EAST_1
         vpc_client.vpcs = {
@@ -400,13 +400,13 @@ class Test_networkfirewall_in_all_vpc:
                             assert r.resource_arn == "arn_test"
 
     def test_vpcs_without_firewall_ignoring(self):
-        networkfirewall_client = mock.MagicMock
+        networkfirewall_client = mock.MagicMock()
         networkfirewall_client.provider = set_mocked_aws_provider(
             [AWS_REGION_US_EAST_1]
         )
         networkfirewall_client.region = AWS_REGION_US_EAST_1
-        networkfirewall_client.network_firewalls = []
-        vpc_client = mock.MagicMock
+        networkfirewall_client.network_firewalls = {}
+        vpc_client = mock.MagicMock()
         vpc_client.provider = set_mocked_aws_provider([AWS_REGION_US_EAST_1])
         vpc_client.region = AWS_REGION_US_EAST_1
         vpc_client.vpcs = {
@@ -464,13 +464,13 @@ class Test_networkfirewall_in_all_vpc:
                     assert len(result) == 0
 
     def test_vpcs_without_firewall_ignoring_vpc_in_use(self):
-        networkfirewall_client = mock.MagicMock
+        networkfirewall_client = mock.MagicMock()
         networkfirewall_client.provider = set_mocked_aws_provider(
             [AWS_REGION_US_EAST_1]
         )
         networkfirewall_client.region = AWS_REGION_US_EAST_1
-        networkfirewall_client.network_firewalls = []
-        vpc_client = mock.MagicMock
+        networkfirewall_client.network_firewalls = {}
+        vpc_client = mock.MagicMock()
         vpc_client.provider = set_mocked_aws_provider([AWS_REGION_US_EAST_1])
         vpc_client.region = AWS_REGION_US_EAST_1
         vpc_client.vpcs = {

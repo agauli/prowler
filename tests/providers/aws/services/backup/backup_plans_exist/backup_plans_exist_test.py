@@ -10,7 +10,7 @@ AWS_ACCOUNT_NUMBER = "123456789012"
 
 class Test_backup_plans_exist:
     def test_no_backup_plans(self):
-        backup_client = mock.MagicMock
+        backup_client = mock.MagicMock()
         backup_client.audited_account = AWS_ACCOUNT_NUMBER
         backup_client.audited_account_arn = f"arn:aws:iam::{AWS_ACCOUNT_NUMBER}:root"
         backup_client.audited_partition = "aws"
@@ -21,9 +21,15 @@ class Test_backup_plans_exist:
         )
         backup_client.backup_plans = []
         backup_client.backup_vaults = ["vault"]
-        with mock.patch(
-            "prowler.providers.aws.services.backup.backup_service.Backup",
-            new=backup_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.backup.backup_service.Backup",
+                new=backup_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.backup.backup_plans_exist.backup_plans_exist.backup_client",
+                new=backup_client,
+            ),
         ):
             # Test Check
             from prowler.providers.aws.services.backup.backup_plans_exist.backup_plans_exist import (
@@ -42,6 +48,7 @@ class Test_backup_plans_exist:
                 == f"arn:aws:backup:{AWS_REGION}:{AWS_ACCOUNT_NUMBER}:backup-plan"
             )
             assert result[0].region == AWS_REGION
+            assert result[0].resource_tags == []
 
     def test_no_backup_plans_not_vaults(self):
         backup_client = mock.MagicMock
@@ -50,9 +57,15 @@ class Test_backup_plans_exist:
         backup_client.region = AWS_REGION
         backup_client.backup_plans = []
         backup_client.backup_vaults = []
-        with mock.patch(
-            "prowler.providers.aws.services.backup.backup_service.Backup",
-            new=backup_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.backup.backup_service.Backup",
+                new=backup_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.backup.backup_plans_exist.backup_plans_exist.backup_client",
+                new=backup_client,
+            ),
         ):
             # Test Check
             from prowler.providers.aws.services.backup.backup_plans_exist.backup_plans_exist import (
@@ -82,11 +95,18 @@ class Test_backup_plans_exist:
                 version_id="version_id",
                 last_execution_date=datetime(2015, 1, 1),
                 advanced_settings=[],
+                tags=[],
             )
         ]
-        with mock.patch(
-            "prowler.providers.aws.services.backup.backup_service.Backup",
-            new=backup_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.backup.backup_service.Backup",
+                new=backup_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.backup.backup_plans_exist.backup_plans_exist.backup_client",
+                new=backup_client,
+            ),
         ):
             # Test Check
             from prowler.providers.aws.services.backup.backup_plans_exist.backup_plans_exist import (
@@ -108,3 +128,4 @@ class Test_backup_plans_exist:
                 == f"arn:aws:backup:{AWS_REGION}:{AWS_ACCOUNT_NUMBER}:plan:{backup_plan_id}"
             )
             assert result[0].region == AWS_REGION
+            assert result[0].resource_tags == []

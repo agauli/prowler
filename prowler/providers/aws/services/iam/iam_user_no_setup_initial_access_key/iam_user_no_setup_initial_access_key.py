@@ -48,10 +48,15 @@ class iam_user_no_setup_initial_access_key(Check):
         return findings
 
     def add_finding(self, user, status, status_extended, findings):
-        report = Check_Report_AWS(self.metadata())
+        report = Check_Report_AWS(metadata=self.metadata(), resource=user)
         report.region = iam_client.region
         report.resource_id = user["user"]
         report.resource_arn = user["arn"]
         report.status = status
         report.status_extended = status_extended
+        # Search user in iam_client.users to get tags
+        for iam_user in iam_client.users:
+            if iam_user.arn == user["arn"]:
+                report.resource_tags = iam_user.tags
+                break
         findings.append(report)

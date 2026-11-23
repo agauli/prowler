@@ -1,3 +1,6 @@
+from math import isfinite
+
+
 def unroll_list(listed_items: list, separator: str = "|") -> str:
     """
     Unrolls a list of items into a single string, separated by a specified separator.
@@ -52,6 +55,14 @@ def unroll_tags(tags: list) -> dict:
         >>> unroll_tags(tags)
         {'name': 'John', 'age': '30'}
 
+        >>> tags = [{"key": "name"}]
+        >>> unroll_tags(tags)
+        {'name': ''}
+
+        >>> tags = [{"Key": "name"}]
+        >>> unroll_tags(tags)
+        {'name': ''}
+
         >>> tags = [{"name": "John", "age": "30"}]
         >>> unroll_tags(tags)
         {'name': 'John', 'age': '30'}
@@ -63,14 +74,20 @@ def unroll_tags(tags: list) -> dict:
         >>> tags = {"name": "John", "age": "30"}
         >>> unroll_tags(tags)
         {'name': 'John', 'age': '30'}
+
+        >>> tags = ["name", "age"]
+        >>> unroll_tags(tags)
+        {'name': '', 'age': ''}
     """
-    if tags and tags != [{}] and tags != [None]:
+    if tags and tags != [{}] and tags != [None] and tags != []:
         if isinstance(tags, dict):
             return tags
+        if isinstance(tags[0], str) and len(tags) > 0:
+            return {tag: "" for tag in tags}
         if "key" in tags[0]:
-            return {item["key"]: item["value"] for item in tags}
+            return {item["key"]: item.get("value", "") for item in tags}
         elif "Key" in tags[0]:
-            return {item["Key"]: item["Value"] for item in tags}
+            return {item["Key"]: item.get("Value", "") for item in tags}
         else:
             return {key: value for d in tags for key, value in d.items()}
     return {}
@@ -185,3 +202,38 @@ def parse_html_string(str: str) -> str:
             string += f"\n&#x2022;{elem}\n"
 
     return string
+
+
+def sanitize_csv_value(value):
+    """Prefix a cell with `'` when a spreadsheet would evaluate it as a formula; numbers are left as they are."""
+    if not isinstance(value, str) or not (
+        value.startswith(("\t", "\r"))
+        or value.lstrip().startswith(("=", "+", "-", "@"))
+    ):
+        return value
+    try:
+        number = float(value)
+    except ValueError:
+        return f"'{value}"
+    # float() also accepts nan/inf and whitespace-padded forms, which a spreadsheet
+    # renders as text rather than as a number
+    if isfinite(number) and value == value.strip():
+        return value
+    return f"'{value}"
+
+
+def is_plain_json(value) -> bool:
+    """Return True when value is made only of JSON types with str keys."""
+    try:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return True
+        if isinstance(value, dict):
+            return all(
+                isinstance(key, str) and is_plain_json(item)
+                for key, item in value.items()
+            )
+        if isinstance(value, list):
+            return all(is_plain_json(item) for item in value)
+        return False
+    except RecursionError:
+        return False

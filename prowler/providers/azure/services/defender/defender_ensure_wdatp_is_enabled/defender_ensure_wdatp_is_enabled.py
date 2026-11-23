@@ -7,21 +7,30 @@ class defender_ensure_wdatp_is_enabled(Check):
         findings = []
 
         for (
-            subscription_name,
+            subscription_id,
             settings,
         ) in defender_client.settings.items():
-            report = Check_Report_Azure(self.metadata())
-            report.status = "FAIL"
-            report.subscription = subscription_name
-            report.resource_name = "WDATP"
-            report.resource_id = "WDATP"
-            report.status_extended = f"Microsoft Defender for Endpoint integration not exists for subscription {subscription_name}."
-            if "WDATP" in settings:
-                report.status_extended = f"Microsoft Defender for Endpoint integration is disabeld for subscription {subscription_name}."
-                report.resource_id = settings["WDATP"].resource_id
+            subscription_name = defender_client.subscriptions.get(
+                subscription_id, subscription_id
+            )
+            if "WDATP" not in settings:
+                report = Check_Report_Azure(metadata=self.metadata(), resource={})
+                report.subscription = subscription_id
+                report.resource_name = subscription_id
+                report.resource_id = f"/subscriptions/{subscription_id}"
+                report.status = "FAIL"
+                report.status_extended = f"Microsoft Defender for Endpoint integration not exists for subscription {subscription_name} ({subscription_id})."
+            else:
+                report = Check_Report_Azure(
+                    metadata=self.metadata(), resource=settings["WDATP"]
+                )
+                report.subscription = subscription_id
                 if settings["WDATP"].enabled:
                     report.status = "PASS"
-                    report.status_extended = f"Microsoft Defender for Endpoint integration is enabled for subscription {subscription_name}."
+                    report.status_extended = f"Microsoft Defender for Endpoint integration is enabled for subscription {subscription_name} ({subscription_id})."
+                else:
+                    report.status = "FAIL"
+                    report.status_extended = f"Microsoft Defender for Endpoint integration is disabled for subscription {subscription_name} ({subscription_id})."
 
             findings.append(report)
 

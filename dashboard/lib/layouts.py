@@ -1,5 +1,7 @@
 from dash import dcc, html
 
+from dashboard.pages.cloud import build_compliance_handoff_card
+
 
 def create_layout_overview(
     account_dropdown: html.Div,
@@ -9,9 +11,12 @@ def create_layout_overview(
     download_button_xlsx: html.Button,
     severity_dropdown: html.Div,
     service_dropdown: html.Div,
+    provider_dropdown: html.Div,
     table_row_dropdown: html.Div,
     status_dropdown: html.Div,
+    category_dropdown: html.Div,
     table_div_header: html.Div,
+    amount_providers: int,
 ) -> html.Div:
     """
     Create the layout of the dashboard.
@@ -47,9 +52,11 @@ def create_layout_overview(
                 [
                     html.Div([severity_dropdown], className=""),
                     html.Div([service_dropdown], className=""),
+                    html.Div([provider_dropdown], className=""),
                     html.Div([status_dropdown], className=""),
+                    html.Div([category_dropdown], className=""),
                 ],
-                className="grid gap-x-4 mb-[30px] sm:grid-cols-2 lg:grid-cols-3",
+                className="grid gap-x-4 mb-[30px] sm:grid-cols-2 lg:grid-cols-5",
             ),
             html.Div(
                 [
@@ -57,8 +64,10 @@ def create_layout_overview(
                     html.Div(className="flex", id="azure_card", n_clicks=0),
                     html.Div(className="flex", id="gcp_card", n_clicks=0),
                     html.Div(className="flex", id="k8s_card", n_clicks=0),
+                    html.Div(className="flex", id="m365_card", n_clicks=0),
+                    html.Div(className="flex", id="alibabacloud_card", n_clicks=0),
                 ],
-                className="grid gap-x-4 mb-[30px] sm:grid-cols-2 lg:grid-cols-4",
+                className=f"grid gap-x-4 mb-[30px] sm:grid-cols-2 lg:grid-cols-{amount_providers}",
             ),
             html.H4(
                 "Count of Findings by severity",
@@ -89,12 +98,28 @@ def create_layout_overview(
                     ),
                     html.Div(
                         [
-                            (
-                                html.Label(
-                                    "Table Rows:",
-                                    className="text-prowler-stone-900 font-bold text-sm",
-                                    style={"margin-right": "10px"},
-                                )
+                            html.Label(
+                                "Search:",
+                                className="text-prowler-stone-900 font-bold text-sm",
+                                style={"margin-right": "10px"},
+                            ),
+                            dcc.Input(
+                                id="search-input",
+                                type="text",
+                                placeholder="Search by check title, service, region...",
+                                debounce=True,
+                                style={
+                                    "padding": "4px 8px",
+                                    "border": "1px solid #ccc",
+                                    "borderRadius": "4px",
+                                    "marginRight": "20px",
+                                    "width": "250px",
+                                },
+                            ),
+                            html.Label(
+                                "Table Rows:",
+                                className="text-prowler-stone-900 font-bold text-sm",
+                                style={"margin-right": "10px"},
                             ),
                             table_row_dropdown,
                             download_button_csv,
@@ -131,9 +156,9 @@ def create_layout_compliance(
                     html.A(
                         [
                             html.Img(src="assets/favicon.ico", className="w-5 mr-3"),
-                            html.Span("Subscribe to prowler SaaS"),
+                            html.Span("Subscribe to Prowler Cloud"),
                         ],
-                        href="https://prowler.pro/",
+                        href="https://cloud.prowler.com/sign-up?utm_source=prowler-local-dashboard&utm_content=compliance",
                         target="_blank",
                         className="text-prowler-stone-900 inline-flex px-4 py-2 text-xs font-bold uppercase transition-all rounded-lg text-gray-900 hover:bg-prowler-stone-900/10 border-solid border-1 hover:border-prowler-stone-900/10 hover:border-solid hover:border-1 border-prowler-stone-900/10",
                     ),
@@ -171,6 +196,7 @@ def create_layout_compliance(
                 className="text-prowler-stone-900 text-lg font-bold",
             ),
             html.Div(className="flex flex-wrap", id="output"),
+            build_compliance_handoff_card(),
         ],
         className="grid gap-x-8 gap-y-8 2xl:container mx-auto",
     )

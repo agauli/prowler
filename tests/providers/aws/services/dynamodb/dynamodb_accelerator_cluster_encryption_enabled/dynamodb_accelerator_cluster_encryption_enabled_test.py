@@ -1,4 +1,3 @@
-from re import search
 from unittest import mock
 
 from boto3 import client
@@ -21,12 +20,15 @@ class Test_dynamodb_accelerator_cluster_encryption_enabled:
             [AWS_REGION_EU_WEST_1, AWS_REGION_US_EAST_1]
         )
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=aws_provider,
-        ), mock.patch(
-            "prowler.providers.aws.services.dynamodb.dynamodb_accelerator_cluster_encryption_enabled.dynamodb_accelerator_cluster_encryption_enabled.dax_client",
-            new=DAX(aws_provider),
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.dynamodb.dynamodb_accelerator_cluster_encryption_enabled.dynamodb_accelerator_cluster_encryption_enabled.dax_client",
+                new=DAX(aws_provider),
+            ),
         ):
             # Test Check
             from prowler.providers.aws.services.dynamodb.dynamodb_accelerator_cluster_encryption_enabled.dynamodb_accelerator_cluster_encryption_enabled import (
@@ -47,6 +49,7 @@ class Test_dynamodb_accelerator_cluster_encryption_enabled:
             NodeType="dax.t3.small",
             ReplicationFactor=3,
             IamRoleArn=iam_role_arn,
+            ClusterEndpointEncryptionType="TLS",
         )["Cluster"]
         from prowler.providers.aws.services.dynamodb.dynamodb_service import DAX
 
@@ -54,12 +57,15 @@ class Test_dynamodb_accelerator_cluster_encryption_enabled:
             [AWS_REGION_EU_WEST_1, AWS_REGION_US_EAST_1]
         )
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=aws_provider,
-        ), mock.patch(
-            "prowler.providers.aws.services.dynamodb.dynamodb_accelerator_cluster_encryption_enabled.dynamodb_accelerator_cluster_encryption_enabled.dax_client",
-            new=DAX(aws_provider),
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.dynamodb.dynamodb_accelerator_cluster_encryption_enabled.dynamodb_accelerator_cluster_encryption_enabled.dax_client",
+                new=DAX(aws_provider),
+            ),
         ):
             # Test Check
             from prowler.providers.aws.services.dynamodb.dynamodb_accelerator_cluster_encryption_enabled.dynamodb_accelerator_cluster_encryption_enabled import (
@@ -71,9 +77,9 @@ class Test_dynamodb_accelerator_cluster_encryption_enabled:
 
             assert len(result) == 1
             assert result[0].status == "FAIL"
-            assert search(
-                "does not have encryption at rest enabled",
-                result[0].status_extended,
+            assert (
+                result[0].status_extended
+                == "DAX cluster daxcluster does not have encryption at rest enabled."
             )
             assert result[0].resource_id == cluster["ClusterName"]
             assert result[0].resource_arn == cluster["ClusterArn"]
@@ -89,6 +95,7 @@ class Test_dynamodb_accelerator_cluster_encryption_enabled:
             NodeType="dax.t3.small",
             ReplicationFactor=3,
             IamRoleArn=iam_role_arn,
+            ClusterEndpointEncryptionType="TLS",
             SSESpecification={"Enabled": True},
         )["Cluster"]
         from prowler.providers.aws.services.dynamodb.dynamodb_service import DAX
@@ -97,12 +104,15 @@ class Test_dynamodb_accelerator_cluster_encryption_enabled:
             [AWS_REGION_EU_WEST_1, AWS_REGION_US_EAST_1]
         )
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=aws_provider,
-        ), mock.patch(
-            "prowler.providers.aws.services.dynamodb.dynamodb_accelerator_cluster_encryption_enabled.dynamodb_accelerator_cluster_encryption_enabled.dax_client",
-            new=DAX(aws_provider),
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=aws_provider,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.dynamodb.dynamodb_accelerator_cluster_encryption_enabled.dynamodb_accelerator_cluster_encryption_enabled.dax_client",
+                new=DAX(aws_provider),
+            ),
         ):
             # Test Check
             from prowler.providers.aws.services.dynamodb.dynamodb_accelerator_cluster_encryption_enabled.dynamodb_accelerator_cluster_encryption_enabled import (
@@ -114,7 +124,10 @@ class Test_dynamodb_accelerator_cluster_encryption_enabled:
 
             assert len(result) == 1
             assert result[0].status == "PASS"
-            assert search("has encryption at rest enabled", result[0].status_extended)
+            assert (
+                result[0].status_extended
+                == "DAX cluster daxcluster has encryption at rest enabled."
+            )
             assert result[0].resource_id == cluster["ClusterName"]
             assert result[0].resource_arn == cluster["ClusterArn"]
             assert result[0].region == AWS_REGION_US_EAST_1

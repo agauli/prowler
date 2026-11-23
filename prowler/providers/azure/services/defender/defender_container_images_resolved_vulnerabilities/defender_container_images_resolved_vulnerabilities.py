@@ -7,9 +7,12 @@ class defender_container_images_resolved_vulnerabilities(Check):
         findings = []
 
         for (
-            subscription_name,
+            subscription_id,
             assessments,
         ) in defender_client.assessments.items():
+            subscription_name = defender_client.subscriptions.get(
+                subscription_id, subscription_id
+            )
             if (
                 "Azure running container images should have vulnerabilities resolved (powered by Microsoft Defender Vulnerability Management)"
                 in assessments
@@ -22,17 +25,15 @@ class defender_container_images_resolved_vulnerabilities(Check):
                 )
                 != "NotApplicable"
             ):
-                report = Check_Report_Azure(self.metadata())
+                report = Check_Report_Azure(
+                    metadata=self.metadata(),
+                    resource=assessments[
+                        "Azure running container images should have vulnerabilities resolved (powered by Microsoft Defender Vulnerability Management)"
+                    ],
+                )
+                report.subscription = subscription_id
                 report.status = "PASS"
-                report.subscription = subscription_name
-                report.resource_name = assessments[
-                    "Azure running container images should have vulnerabilities resolved (powered by Microsoft Defender Vulnerability Management)"
-                ].resource_name
-                report.resource_id = assessments[
-                    "Azure running container images should have vulnerabilities resolved (powered by Microsoft Defender Vulnerability Management)"
-                ].resource_id
-                report.status_extended = f"Azure running container images do not have unresolved vulnerabilities in subscription '{subscription_name}'."
-
+                report.status_extended = f"Azure running container images do not have unresolved vulnerabilities in subscription '{subscription_name} ({subscription_id})'."
                 if (
                     assessments[
                         "Azure running container images should have vulnerabilities resolved (powered by Microsoft Defender Vulnerability Management)"
@@ -40,7 +41,7 @@ class defender_container_images_resolved_vulnerabilities(Check):
                     == "Unhealthy"
                 ):
                     report.status = "FAIL"
-                    report.status_extended = f"Azure running container images have unresolved vulnerabilities in subscription '{subscription_name}'."
+                    report.status_extended = f"Azure running container images have unresolved vulnerabilities in subscription '{subscription_name} ({subscription_id})'."
 
                 findings.append(report)
 

@@ -18,7 +18,7 @@ def mock_make_api_call(self, operation_name, kwarg):
         return {
             "DBEngineVersions": [
                 {
-                    "Engine": "mysql",
+                    "Engine": "postgres",
                     "EngineVersion": "8.0.32",
                     "DBEngineDescription": "description",
                     "DBEngineVersionDescription": "description",
@@ -83,7 +83,8 @@ class Test_rds_instance_backup_enabled:
                     rds_instance_backup_enabled,
                 )
 
-                service_client.db_instances[0].backup_retention_period = 0
+                instance_arn = f"arn:aws:rds:{AWS_REGION_US_EAST_1}:{AWS_ACCOUNT_NUMBER}:db:{instance_id}"
+                service_client.db_instances[instance_arn].backup_retention_period = 0
 
                 check = rds_instance_backup_enabled()
                 result = check.execute()

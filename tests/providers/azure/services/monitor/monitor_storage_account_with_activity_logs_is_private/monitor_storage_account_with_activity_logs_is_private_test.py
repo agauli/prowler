@@ -1,7 +1,9 @@
 from unittest import mock
 
 from tests.providers.azure.azure_fixtures import (
+    AZURE_SUBSCRIPTION_DISPLAY,
     AZURE_SUBSCRIPTION_ID,
+    AZURE_SUBSCRIPTION_NAME,
     set_mocked_azure_provider,
 )
 
@@ -11,14 +13,18 @@ class Test_monitor_storage_account_with_activity_logs_is_private:
         self,
     ):
         monitor_client = mock.MagicMock
+        monitor_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         monitor_client.diagnostics_settings = {}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.monitor.monitor_storage_account_with_activity_logs_is_private.monitor_storage_account_with_activity_logs_is_private.monitor_client",
-            new=monitor_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.monitor.monitor_storage_account_with_activity_logs_is_private.monitor_storage_account_with_activity_logs_is_private.monitor_client",
+                new=monitor_client,
+            ),
         ):
             from prowler.providers.azure.services.monitor.monitor_storage_account_with_activity_logs_is_private.monitor_storage_account_with_activity_logs_is_private import (
                 monitor_storage_account_with_activity_logs_is_private,
@@ -30,13 +36,17 @@ class Test_monitor_storage_account_with_activity_logs_is_private:
 
     def test_no_diagnostic_settings(self):
         monitor_client = mock.MagicMock
+        monitor_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         monitor_client.diagnostics_settings = {AZURE_SUBSCRIPTION_ID: []}
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.monitor.monitor_storage_account_with_activity_logs_is_private.monitor_storage_account_with_activity_logs_is_private.monitor_client",
-            new=monitor_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.monitor.monitor_storage_account_with_activity_logs_is_private.monitor_storage_account_with_activity_logs_is_private.monitor_client",
+                new=monitor_client,
+            ),
         ):
             from prowler.providers.azure.services.monitor.monitor_storage_account_with_activity_logs_is_private.monitor_storage_account_with_activity_logs_is_private import (
                 monitor_storage_account_with_activity_logs_is_private,
@@ -48,14 +58,19 @@ class Test_monitor_storage_account_with_activity_logs_is_private:
 
     def test_diagnostic_settings_configured(self):
         monitor_client = mock.MagicMock
+        monitor_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         storage_client = mock.MagicMock
+        storage_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.monitor.monitor_storage_account_with_activity_logs_is_private.monitor_storage_account_with_activity_logs_is_private.monitor_client",
-            new=monitor_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.monitor.monitor_storage_account_with_activity_logs_is_private.monitor_storage_account_with_activity_logs_is_private.monitor_client",
+                new=monitor_client,
+            ),
         ):
             with mock.patch(
                 "prowler.providers.azure.services.monitor.monitor_storage_account_with_activity_logs_is_private.monitor_storage_account_with_activity_logs_is_private.storage_client",
@@ -69,6 +84,9 @@ class Test_monitor_storage_account_with_activity_logs_is_private:
                 )
                 from prowler.providers.azure.services.storage.storage_service import (
                     Account,
+                    BlobProperties,
+                    DeleteRetentionPolicy,
+                    NetworkRuleSet,
                 )
 
                 monitor_client.diagnostics_settings = {
@@ -116,20 +134,25 @@ class Test_monitor_storage_account_with_activity_logs_is_private:
                             name="storageaccountname1",
                             resouce_group_name="rg",
                             enable_https_traffic_only=True,
-                            infrastructure_encryption="Enabled",
+                            infrastructure_encryption=True,
                             allow_blob_public_access=True,
-                            network_rule_set="AllowAll",
+                            network_rule_set=NetworkRuleSet(
+                                bypass="AzureServices", default_action="Allow"
+                            ),
                             encryption_type="Microsoft.Storage",
                             minimum_tls_version="TLS1_2",
                             private_endpoint_connections=[],
                             key_expiration_period_in_days=365,
                             location="euwest",
-                            blob_properties=mock.MagicMock(
+                            blob_properties=BlobProperties(
                                 id="id",
                                 name="name",
                                 type="type",
                                 default_service_version="default_service_version",
-                                container_delete_retention_policy="container_delete_retention_policy",
+                                container_delete_retention_policy=DeleteRetentionPolicy(
+                                    enabled=True, days=7
+                                ),
+                                versioning_enabled=True,
                             ),
                         ),
                         Account(
@@ -137,20 +160,25 @@ class Test_monitor_storage_account_with_activity_logs_is_private:
                             name="storageaccountname2",
                             resouce_group_name="rg",
                             enable_https_traffic_only=False,
-                            infrastructure_encryption="Enabled",
+                            infrastructure_encryption=True,
                             allow_blob_public_access=False,
-                            network_rule_set="AllowAll",
+                            network_rule_set=NetworkRuleSet(
+                                bypass="AzureServices", default_action="Allow"
+                            ),
                             encryption_type="Microsoft.Storage",
                             minimum_tls_version="TLS1_2",
                             private_endpoint_connections=[],
                             key_expiration_period_in_days=365,
                             location="euwest",
-                            blob_properties=mock.MagicMock(
+                            blob_properties=BlobProperties(
                                 id="id",
                                 name="name",
                                 type="type",
                                 default_service_version="default_service_version",
-                                container_delete_retention_policy="container_delete_retention_policy",
+                                container_delete_retention_policy=DeleteRetentionPolicy(
+                                    enabled=True, days=7
+                                ),
+                                versioning_enabled=False,
                             ),
                         ),
                     ]
@@ -168,7 +196,7 @@ class Test_monitor_storage_account_with_activity_logs_is_private:
                 assert result[0].resource_name == "storageaccountname1"
                 assert (
                     result[0].status_extended
-                    == f"Blob public access enabled in storage account {storage_client.storage_accounts[AZURE_SUBSCRIPTION_ID][0].name} storing activity logs in subscription {AZURE_SUBSCRIPTION_ID}."
+                    == f"Blob public access enabled in storage account {storage_client.storage_accounts[AZURE_SUBSCRIPTION_ID][0].name} storing activity logs in subscription {AZURE_SUBSCRIPTION_DISPLAY}."
                 )
                 assert result[1].subscription == AZURE_SUBSCRIPTION_ID
                 assert result[1].status == "PASS"
@@ -180,5 +208,5 @@ class Test_monitor_storage_account_with_activity_logs_is_private:
                 assert result[1].resource_name == "storageaccountname2"
                 assert (
                     result[1].status_extended
-                    == f"Blob public access disabled in storage account {storage_client.storage_accounts[AZURE_SUBSCRIPTION_ID][1].name} storing activity logs in subscription {AZURE_SUBSCRIPTION_ID}."
+                    == f"Blob public access disabled in storage account {storage_client.storage_accounts[AZURE_SUBSCRIPTION_ID][1].name} storing activity logs in subscription {AZURE_SUBSCRIPTION_DISPLAY}."
                 )

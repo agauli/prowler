@@ -7,6 +7,7 @@ from tests.providers.aws.utils import AWS_ACCOUNT_NUMBER, AWS_REGION_US_EAST_1
 class Test_ssm_documents_secrets:
     def test_no_documents(self):
         ssm_client = mock.MagicMock
+        ssm_client.audit_config = {}
         ssm_client.documents = {}
         with mock.patch(
             "prowler.providers.aws.services.ssm.ssm_service.SSM",
@@ -27,12 +28,13 @@ class Test_ssm_documents_secrets:
         document_name = "test-document"
         document_arn = f"arn:aws:ssm:{AWS_REGION_US_EAST_1}:{AWS_ACCOUNT_NUMBER}:document/{document_name}"
         ssm_client.audited_account = AWS_ACCOUNT_NUMBER
+        ssm_client.audit_config = {}
         ssm_client.documents = {
             document_name: Document(
                 arn=document_arn,
                 name=document_name,
                 region=AWS_REGION_US_EAST_1,
-                content={"db_password": "test-password"},
+                content={"db_password": "Tr0ub4dor3xKq9vLmZ"},
                 account_owners=[],
             )
         }
@@ -55,7 +57,7 @@ class Test_ssm_documents_secrets:
             assert result[0].status == "FAIL"
             assert (
                 result[0].status_extended
-                == f"Potential secret found in SSM Document {document_name} -> Secret Keyword on line 2."
+                == f"Potential secret found in SSM Document {document_name} -> Generic Password on line 2."
             )
 
     def test_document_no_secrets(self):
@@ -63,6 +65,7 @@ class Test_ssm_documents_secrets:
         document_name = "test-document"
         document_arn = f"arn:aws:ssm:{AWS_REGION_US_EAST_1}:{AWS_ACCOUNT_NUMBER}:document/{document_name}"
         ssm_client.audited_account = AWS_ACCOUNT_NUMBER
+        ssm_client.audit_config = {}
         ssm_client.documents = {
             document_name: Document(
                 arn=document_arn,

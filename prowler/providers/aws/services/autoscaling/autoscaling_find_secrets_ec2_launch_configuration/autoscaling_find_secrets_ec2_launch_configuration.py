@@ -1,14 +1,14 @@
-import os
-import tempfile
 import zlib
 from base64 import b64decode
-
-from detect_secrets import SecretsCollection
-from detect_secrets.settings import default_settings
 
 from prowler.config.config import encoding_format_utf_8
 from prowler.lib.check.models import Check, Check_Report_AWS
 from prowler.lib.logger import logger
+from prowler.lib.utils.utils import (
+    SecretsScanError,
+    annotate_verified_secrets,
+    detect_secrets_scan_batch,
+)
 from prowler.providers.aws.services.autoscaling.autoscaling_client import (
     autoscaling_client,
 )
@@ -17,16 +17,25 @@ from prowler.providers.aws.services.autoscaling.autoscaling_client import (
 class autoscaling_find_secrets_ec2_launch_configuration(Check):
     def execute(self):
         findings = []
-        for configuration in autoscaling_client.launch_configurations:
-            report = Check_Report_AWS(self.metadata())
-            report.region = configuration.region
-            report.resource_id = configuration.name
-            report.resource_arn = configuration.arn
+        secrets_ignore_patterns = autoscaling_client.audit_config.get(
+            "secrets_ignore_patterns", []
+        )
+        validate = autoscaling_client.audit_config.get("secrets_validate", False)
 
-            if configuration.user_data:
-                temp_user_data_file = tempfile.NamedTemporaryFile(delete=False)
+        confidence = autoscaling_client.audit_config.get("secrets_confidence", "low")
+        configurations = list(autoscaling_client.launch_configurations.values())
+
+        # Collect the decoded User Data of each launch configuration and scan it
+        # all in batched Kingfisher invocations instead of one subprocess each.
+        # Configurations whose User Data cannot be decoded are undecodable (no report),
+        # matching the original per-resource behavior.
+        undecodable = set()
+
+        def payloads():
+            for index, configuration in enumerate(configurations):
+                if not configuration.user_data:
+                    continue
                 user_data = b64decode(configuration.user_data)
-
                 try:
                     if user_data[0:2] == b"\x1f\x8b":  # GZIP magic number
                         user_data = zlib.decompress(
@@ -38,29 +47,52 @@ class autoscaling_find_secrets_ec2_launch_configuration(Check):
                     logger.warning(
                         f"{configuration.region} -- Unable to decode user data in autoscaling launch configuration {configuration.name}: {error}"
                     )
+                    undecodable.add(index)
                     continue
                 except Exception as error:
                     logger.error(
                         f"{configuration.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                     )
+                    undecodable.add(index)
                     continue
+                yield index, user_data
 
-                temp_user_data_file.write(
-                    bytes(user_data, encoding="raw_unicode_escape")
+        scan_error = None
+        try:
+            batch_results = detect_secrets_scan_batch(
+                payloads(),
+                excluded_secrets=secrets_ignore_patterns,
+                validate=validate,
+                confidence=confidence,
+            )
+        except SecretsScanError as error:
+            batch_results = {}
+            scan_error = error
+
+        for index, configuration in enumerate(configurations):
+            report = Check_Report_AWS(metadata=self.metadata(), resource=configuration)
+
+            if scan_error and configuration.user_data:
+                report.status = "MANUAL"
+                report.status_extended = (
+                    f"Could not scan autoscaling {configuration.name} User Data for "
+                    f"secrets: {scan_error}; manual review is required."
                 )
-                temp_user_data_file.close()
-                secrets = SecretsCollection()
-                with default_settings():
-                    secrets.scan_file(temp_user_data_file.name)
+                findings.append(report)
+                continue
 
-                if secrets.json():
+            if index in undecodable:
+                report.status = "MANUAL"
+                report.status_extended = f"Could not decode User Data for autoscaling {configuration.name}; manual review is required to scan for secrets."
+            elif configuration.user_data:
+                has_secrets = batch_results.get(index)
+                if has_secrets:
                     report.status = "FAIL"
                     report.status_extended = f"Potential secret found in autoscaling {configuration.name} User Data."
+                    annotate_verified_secrets(report, has_secrets)
                 else:
                     report.status = "PASS"
                     report.status_extended = f"No secrets found in autoscaling {configuration.name} User Data."
-
-                os.remove(temp_user_data_file.name)
             else:
                 report.status = "PASS"
                 report.status_extended = f"No secrets found in autoscaling {configuration.name} since User Data is empty."

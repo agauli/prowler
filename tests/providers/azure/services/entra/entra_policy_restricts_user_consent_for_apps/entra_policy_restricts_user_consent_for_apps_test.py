@@ -7,13 +7,16 @@ from tests.providers.azure.azure_fixtures import DOMAIN, set_mocked_azure_provid
 class Test_entra_policy_restricts_user_consent_for_apps:
     def test_entra_no_tenants(self):
         entra_client = mock.MagicMock
-
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps.entra_client",
-            new=entra_client,
+        entra_client.resource_groups = {}
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps.entra_client",
+                new=entra_client,
+            ),
         ):
             from prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps import (
                 entra_policy_restricts_user_consent_for_apps,
@@ -27,19 +30,36 @@ class Test_entra_policy_restricts_user_consent_for_apps:
 
     def test_entra_tenant_empty(self):
         entra_client = mock.MagicMock
+        entra_client.resource_groups = {}
+        id = str(uuid4())
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps.entra_client",
-            new=entra_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps.entra_client",
+                new=entra_client,
+            ),
         ):
             from prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps import (
                 entra_policy_restricts_user_consent_for_apps,
             )
+            from prowler.providers.azure.services.entra.entra_service import (
+                AuthorizationPolicy,
+            )
 
-            entra_client.authorization_policy = {DOMAIN: {}}
+            # Policy with no default user role permissions
+            entra_client.authorization_policy = {
+                DOMAIN: AuthorizationPolicy(
+                    id=id,
+                    name="Authorization Policy",
+                    description="Default policy",
+                    guest_invite_settings="none",
+                    guest_user_role_id=uuid4(),
+                )
+            }
 
             check = entra_policy_restricts_user_consent_for_apps()
             result = check.execute()
@@ -47,7 +67,7 @@ class Test_entra_policy_restricts_user_consent_for_apps:
             assert result[0].status == "FAIL"
             assert result[0].subscription == f"Tenant: {DOMAIN}"
             assert result[0].resource_name == "Authorization Policy"
-            assert result[0].resource_id == "authorizationPolicy"
+            assert result[0].resource_id == id
             assert (
                 result[0].status_extended
                 == "Entra allows users to consent apps accessing company data on their behalf"
@@ -55,13 +75,16 @@ class Test_entra_policy_restricts_user_consent_for_apps:
 
     def test_entra_tenant_no_default_user_role_permissions(self):
         entra_client = mock.MagicMock
-
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps.entra_client",
-            new=entra_client,
+        entra_client.resource_groups = {}
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps.entra_client",
+                new=entra_client,
+            ),
         ):
             from prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps import (
                 entra_policy_restricts_user_consent_for_apps,
@@ -71,12 +94,11 @@ class Test_entra_policy_restricts_user_consent_for_apps:
             )
 
             auth_policy = AuthorizationPolicy(
-                id=uuid4(),
+                id=str(uuid4()),
                 name="Authorization Policy",
                 description="Authorization Policy Description",
-                default_user_role_permissions=None,
                 guest_invite_settings="none",
-                guest_user_role_id=None,
+                guest_user_role_id=uuid4(),
             )
 
             entra_client.authorization_policy = {DOMAIN: auth_policy}
@@ -95,31 +117,34 @@ class Test_entra_policy_restricts_user_consent_for_apps:
 
     def test_entra_tenant_no_consent(self):
         entra_client = mock.MagicMock
-
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps.entra_client",
-            new=entra_client,
+        entra_client.resource_groups = {}
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps.entra_client",
+                new=entra_client,
+            ),
         ):
             from prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps import (
                 entra_policy_restricts_user_consent_for_apps,
             )
             from prowler.providers.azure.services.entra.entra_service import (
                 AuthorizationPolicy,
+                DefaultUserRolePermissions,
             )
 
-            def_user_role_permissions = mock.MagicMock
-            def_user_role_permissions.permission_grant_policies_assigned = []
-
             auth_policy = AuthorizationPolicy(
-                id=uuid4(),
+                id=str(uuid4()),
                 name="Authorization Policy",
                 description="Authorization Policy Description",
-                default_user_role_permissions=def_user_role_permissions,
+                default_user_role_permissions=DefaultUserRolePermissions(
+                    permission_grant_policies_assigned=[]
+                ),
                 guest_invite_settings="none",
-                guest_user_role_id=None,
+                guest_user_role_id=uuid4(),
             )
 
             entra_client.authorization_policy = {DOMAIN: auth_policy}
@@ -138,33 +163,36 @@ class Test_entra_policy_restricts_user_consent_for_apps:
 
     def test_entra_tenant_legacy_consent(self):
         entra_client = mock.MagicMock
-
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps.entra_client",
-            new=entra_client,
+        entra_client.resource_groups = {}
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps.entra_client",
+                new=entra_client,
+            ),
         ):
             from prowler.providers.azure.services.entra.entra_policy_restricts_user_consent_for_apps.entra_policy_restricts_user_consent_for_apps import (
                 entra_policy_restricts_user_consent_for_apps,
             )
             from prowler.providers.azure.services.entra.entra_service import (
                 AuthorizationPolicy,
+                DefaultUserRolePermissions,
             )
 
-            def_user_role_permissions = mock.MagicMock
-            def_user_role_permissions.permission_grant_policies_assigned = [
-                "ManagePermissionGrantsForSelf.microsoft-user-default-legacy"
-            ]
-
             auth_policy = AuthorizationPolicy(
-                id=uuid4(),
+                id=str(uuid4()),
                 name="Authorization Policy",
                 description="Authorization Policy Description",
-                default_user_role_permissions=def_user_role_permissions,
+                default_user_role_permissions=DefaultUserRolePermissions(
+                    permission_grant_policies_assigned=[
+                        "ManagePermissionGrantsForSelf.microsoft-user-default-legacy"
+                    ]
+                ),
                 guest_invite_settings="none",
-                guest_user_role_id=None,
+                guest_user_role_id=uuid4(),
             )
 
             entra_client.authorization_policy = {DOMAIN: auth_policy}

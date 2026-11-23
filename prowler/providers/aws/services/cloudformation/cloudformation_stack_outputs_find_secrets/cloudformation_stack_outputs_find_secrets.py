@@ -1,10 +1,9 @@
-import os
-import tempfile
-
-from detect_secrets import SecretsCollection
-from detect_secrets.settings import default_settings
-
 from prowler.lib.check.models import Check, Check_Report_AWS
+from prowler.lib.utils.utils import (
+    SecretsScanError,
+    annotate_verified_secrets,
+    detect_secrets_scan_batch,
+)
 from prowler.providers.aws.services.cloudformation.cloudformation_client import (
     cloudformation_client,
 )
@@ -16,38 +15,64 @@ class cloudformation_stack_outputs_find_secrets(Check):
     def execute(self):
         """Execute the cloudformation_stack_outputs_find_secrets check"""
         findings = []
-        for stack in cloudformation_client.stacks:
-            report = Check_Report_AWS(self.metadata())
-            report.region = stack.region
-            report.resource_id = stack.name
-            report.resource_arn = stack.arn
-            report.resource_tags = stack.tags
+        secrets_ignore_patterns = cloudformation_client.audit_config.get(
+            "secrets_ignore_patterns", []
+        )
+        validate = cloudformation_client.audit_config.get("secrets_validate", False)
+
+        confidence = cloudformation_client.audit_config.get("secrets_confidence", "low")
+        stacks = list(cloudformation_client.stacks)
+
+        # Collect one payload per stack (its Outputs) and scan them all in
+        # batched Kingfisher invocations instead of one subprocess per stack.
+        def payloads():
+            for index, stack in enumerate(stacks):
+                if stack.outputs:
+                    yield index, "".join(f"{output}\n" for output in stack.outputs)
+
+        scan_error = None
+        try:
+            batch_results = detect_secrets_scan_batch(
+                payloads(),
+                excluded_secrets=secrets_ignore_patterns,
+                validate=validate,
+                confidence=confidence,
+            )
+        except SecretsScanError as error:
+            batch_results = {}
+            scan_error = error
+
+        for index, stack in enumerate(stacks):
+            report = Check_Report_AWS(metadata=self.metadata(), resource=stack)
             report.status = "PASS"
-            report.status_extended = f"No secrets found in Stack {stack.name} Outputs."
+            report.status_extended = (
+                f"No secrets found in CloudFormation Stack {stack.name} Outputs."
+            )
             if stack.outputs:
-                temp_output_file = tempfile.NamedTemporaryFile(delete=False)
-
-                # Store the CloudFormation Stack Outputs into a file
-                for output in stack.outputs:
-                    temp_output_file.write(f"{output}".encode())
-                temp_output_file.close()
-
-                # Init detect_secrets
-                secrets = SecretsCollection()
-                # Scan file for secrets
-                with default_settings():
-                    secrets.scan_file(temp_output_file.name)
-
-                if secrets.json():
-                    report.status = "FAIL"
+                if scan_error:
+                    report.status = "MANUAL"
                     report.status_extended = (
-                        f"Potential secret found in Stack {stack.name} Outputs."
+                        f"Could not scan CloudFormation Stack {stack.name} Outputs "
+                        f"for secrets: {scan_error}; manual review is required."
                     )
-
-                os.remove(temp_output_file.name)
+                    findings.append(report)
+                    continue
+                detect_secrets_output = batch_results.get(index)
+                if detect_secrets_output:
+                    secrets_string = ", ".join(
+                        [
+                            f"{secret['type']} in Output {int(secret['line_number'])}"
+                            for secret in detect_secrets_output
+                        ]
+                    )
+                    report.status = "FAIL"
+                    report.status_extended = f"Potential secret found in CloudFormation Stack {stack.name} Outputs -> {secrets_string}."
+                    annotate_verified_secrets(report, detect_secrets_output)
             else:
                 report.status = "PASS"
-                report.status_extended = f"CloudFormation {stack.name} has no Outputs."
+                report.status_extended = (
+                    f"CloudFormation Stack {stack.name} has no Outputs."
+                )
 
             findings.append(report)
 

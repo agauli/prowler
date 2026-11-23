@@ -3,7 +3,9 @@ from uuid import uuid4
 
 from prowler.providers.azure.services.aks.aks_service import Cluster
 from tests.providers.azure.azure_fixtures import (
+    AZURE_SUBSCRIPTION_DISPLAY,
     AZURE_SUBSCRIPTION_ID,
+    AZURE_SUBSCRIPTION_NAME,
     set_mocked_azure_provider,
 )
 
@@ -11,14 +13,18 @@ from tests.providers.azure.azure_fixtures import (
 class Test_aks_cluster_rbac_enabled:
     def test_aks_no_subscriptions(self):
         aks_client = mock.MagicMock
+        aks_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         aks_client.clusters = {}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled.aks_client",
-            new=aks_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled.aks_client",
+                new=aks_client,
+            ),
         ):
             from prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled import (
                 aks_cluster_rbac_enabled,
@@ -30,14 +36,18 @@ class Test_aks_cluster_rbac_enabled:
 
     def test_aks_subscription_empty(self):
         aks_client = mock.MagicMock
+        aks_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         aks_client.clusters = {AZURE_SUBSCRIPTION_ID: {}}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled.aks_client",
-            new=aks_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled.aks_client",
+                new=aks_client,
+            ),
         ):
             from prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled import (
                 aks_cluster_rbac_enabled,
@@ -49,10 +59,12 @@ class Test_aks_cluster_rbac_enabled:
 
     def test_aks_cluster_rbac_enabled(self):
         aks_client = mock.MagicMock
+        aks_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         cluster_id = str(uuid4())
         aks_client.clusters = {
             AZURE_SUBSCRIPTION_ID: {
                 cluster_id: Cluster(
+                    id=cluster_id,
                     name="cluster_name",
                     public_fqdn="public_fqdn",
                     private_fqdn=None,
@@ -64,12 +76,15 @@ class Test_aks_cluster_rbac_enabled:
             }
         }
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled.aks_client",
-            new=aks_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled.aks_client",
+                new=aks_client,
+            ),
         ):
             from prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled import (
                 aks_cluster_rbac_enabled,
@@ -81,7 +96,7 @@ class Test_aks_cluster_rbac_enabled:
             assert result[0].status == "PASS"
             assert (
                 result[0].status_extended
-                == f"RBAC is enabled for cluster 'cluster_name' in subscription '{AZURE_SUBSCRIPTION_ID}'."
+                == f"RBAC is enabled for cluster 'cluster_name' in subscription '{AZURE_SUBSCRIPTION_DISPLAY}'."
             )
             assert result[0].resource_name == "cluster_name"
             assert result[0].resource_id == cluster_id
@@ -90,10 +105,12 @@ class Test_aks_cluster_rbac_enabled:
 
     def test_aks_rbac_not_enabled(self):
         aks_client = mock.MagicMock
+        aks_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         cluster_id = str(uuid4())
         aks_client.clusters = {
             AZURE_SUBSCRIPTION_ID: {
                 cluster_id: Cluster(
+                    id=cluster_id,
                     name="cluster_name",
                     public_fqdn="public_fqdn",
                     private_fqdn=None,
@@ -105,12 +122,15 @@ class Test_aks_cluster_rbac_enabled:
             }
         }
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled.aks_client",
-            new=aks_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled.aks_client",
+                new=aks_client,
+            ),
         ):
             from prowler.providers.azure.services.aks.aks_cluster_rbac_enabled.aks_cluster_rbac_enabled import (
                 aks_cluster_rbac_enabled,
@@ -122,7 +142,7 @@ class Test_aks_cluster_rbac_enabled:
             assert result[0].status == "FAIL"
             assert (
                 result[0].status_extended
-                == f"RBAC is not enabled for cluster 'cluster_name' in subscription '{AZURE_SUBSCRIPTION_ID}'."
+                == f"RBAC is not enabled for cluster 'cluster_name' in subscription '{AZURE_SUBSCRIPTION_DISPLAY}'."
             )
             assert result[0].resource_name == "cluster_name"
             assert result[0].resource_id == cluster_id

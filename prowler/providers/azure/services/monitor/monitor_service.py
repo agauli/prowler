@@ -1,22 +1,21 @@
 from dataclasses import dataclass
+from typing import List, Optional
 
 from azure.mgmt.monitor import MonitorManagementClient
-from azure.mgmt.monitor.models import AlertRuleAllOfCondition, LogSettings
 
 from prowler.lib.logger import logger
 from prowler.providers.azure.azure_provider import AzureProvider
 from prowler.providers.azure.lib.service.service import AzureService
 
 
-########################## Monitor
 class Monitor(AzureService):
     def __init__(self, provider: AzureProvider):
         super().__init__(MonitorManagementClient, provider)
 
-        self.diagnostics_settings = self.__get_diagnostics_settings__()
+        self.diagnostics_settings = self._get_diagnostics_settings()
         self.alert_rules = self.get_alert_rules()
 
-    def __get_diagnostics_settings__(self):
+    def _get_diagnostics_settings(self):
         logger.info("Monitor - Getting diagnostics settings...")
         diagnostics_settings_list = []
         diagnostics_settings = {}
@@ -24,17 +23,33 @@ class Monitor(AzureService):
             try:
                 diagnostics_settings_list = self.diagnostic_settings_with_uri(
                     subscription,
-                    f"subscriptions/{self.subscriptions[subscription]}/",
+                    f"subscriptions/{subscription}/",
                     client,
                 )
                 diagnostics_settings.update({subscription: diagnostics_settings_list})
             except Exception as error:
                 logger.error(
-                    f"Subscription name: {subscription} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                    f"Subscription ID: {subscription} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                 )
         return diagnostics_settings
 
-    def diagnostic_settings_with_uri(self, subscription, uri, client):
+    def diagnostic_settings_with_uri(
+        self, subscription, uri, client, raise_errors: bool = False
+    ):
+        """Get the diagnostic settings of one resource.
+
+        Args:
+            subscription: Subscription ID, used for logging.
+            uri: Resource URI to read the diagnostic settings from.
+            client: `MonitorManagementClient` of the subscription.
+            raise_errors: When `True`, API errors are re-raised unlogged so the
+                caller can handle and log them and tell a failure from "no
+                settings configured".
+
+        Returns:
+            The resource's `DiagnosticSetting` items. On error with
+            `raise_errors=False`, the items collected so far (usually `[]`).
+        """
         diagnostics_settings = []
         try:
             settings = client.diagnostic_settings.list(resource_uri=uri)
@@ -48,13 +63,23 @@ class Monitor(AzureService):
                             if getattr(setting, "storage_account_id", None)
                             else None
                         ),
-                        logs=setting.logs,
+                        logs=[
+                            LogSettings(
+                                category=log_settings.category,
+                                category_group=log_settings.category_group,
+                                enabled=log_settings.enabled,
+                            )
+                            for log_settings in (getattr(setting, "logs", []) or [])
+                        ],
                         storage_account_id=setting.storage_account_id,
+                        workspace_id=getattr(setting, "workspace_id", None),
                     )
                 )
         except Exception as error:
+            if raise_errors:
+                raise
             logger.error(
-                f"Subscription id: {subscription} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                f"Subscription ID: {subscription} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
         return diagnostics_settings
 
@@ -70,16 +95,33 @@ class Monitor(AzureService):
                         AlertRule(
                             id=rule.id,
                             name=rule.name,
-                            condition=rule.condition,
+                            condition=AlertRuleAllOfCondition(
+                                all_of=[
+                                    AlertRuleAnyOfOrLeafCondition(
+                                        field=condition.field,
+                                        equals=condition.equals,
+                                    )
+                                    for condition in getattr(
+                                        getattr(rule, "condition", None), "all_of", []
+                                    )
+                                ]
+                            ),
                             enabled=rule.enabled,
                             description=rule.description,
                         )
                     )
             except Exception as error:
                 logger.error(
-                    f"Subscription name: {subscription} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                    f"Subscription ID: {subscription} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                 )
         return alert_rules
+
+
+@dataclass
+class LogSettings:
+    category: str
+    category_group: str
+    enabled: bool
 
 
 @dataclass
@@ -87,8 +129,20 @@ class DiagnosticSetting:
     id: str
     storage_account_id: str
     storage_account_name: str
-    logs: LogSettings
+    logs: List[LogSettings]
     name: str
+    workspace_id: Optional[str] = None
+
+
+@dataclass
+class AlertRuleAnyOfOrLeafCondition:
+    field: str
+    equals: str
+
+
+@dataclass
+class AlertRuleAllOfCondition:
+    all_of: List[AlertRuleAnyOfOrLeafCondition]
 
 
 @dataclass
@@ -97,4 +151,4 @@ class AlertRule:
     name: str
     condition: AlertRuleAllOfCondition
     enabled: bool
-    description: str
+    description: Optional[str]

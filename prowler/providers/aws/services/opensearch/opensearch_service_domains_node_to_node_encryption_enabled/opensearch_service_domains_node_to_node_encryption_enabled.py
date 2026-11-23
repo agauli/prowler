@@ -7,12 +7,8 @@ from prowler.providers.aws.services.opensearch.opensearch_client import (
 class opensearch_service_domains_node_to_node_encryption_enabled(Check):
     def execute(self):
         findings = []
-        for domain in opensearch_client.opensearch_domains:
-            report = Check_Report_AWS(self.metadata())
-            report.region = domain.region
-            report.resource_id = domain.name
-            report.resource_arn = domain.arn
-            report.resource_tags = domain.tags
+        for domain in opensearch_client.opensearch_domains.values():
+            report = Check_Report_AWS(metadata=self.metadata(), resource=domain)
             report.status = "PASS"
             report.status_extended = (
                 f"Opensearch domain {domain.name} has node-to-node encryption enabled."

@@ -1,5 +1,6 @@
 {
   "Framework": "AWS-Account-Security-Onboarding",
+  "Name": "AWS Account Security Onboarding",
   "Version": "",
   "Provider": "AWS",
   "Description": "Checklist when onboarding new AWS Accounts to existing AWS Organization.",
@@ -36,6 +37,26 @@
         "guardduty_is_enabled",
         "accessanalyzer_enabled",
         "macie_is_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "accessanalyzer_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -256,8 +277,21 @@
         }
       ],
       "Checks": [
-        "guardduty_is_enabled",
         "guardduty_is_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -462,7 +496,7 @@
       "Checks": []
     },
     {
-      "Id": "Create Cost Anomaly Detection monitors to alert spending anomalies",
+      "Id": "Create Cost Anomaly Detection monitors to alert spending anomalies (Prod)",
       "Description": "Develop monitoring systems for detecting cost anomalies and generating alerts for irregular spending patterns.",
       "Attributes": [
         {
@@ -475,7 +509,7 @@
       "Checks": []
     },
     {
-      "Id": "Create Cost Anomaly Detection monitors to alert spending anomalies",
+      "Id": "Create Cost Anomaly Detection monitors to alert spending anomalies (QA)",
       "Description": "Establish monitoring systems for cost anomaly detection to promptly notify about unusual spending patterns.",
       "Attributes": [
         {
@@ -513,6 +547,14 @@
       "Checks": [
         "accessanalyzer_enabled",
         "accessanalyzer_enabled_without_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "accessanalyzer_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -529,6 +571,20 @@
         "securityhub_enabled",
         "accessanalyzer_enabled",
         "accessanalyzer_enabled_without_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        },
+        {
+          "Check": "accessanalyzer_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -557,11 +613,11 @@
         }
       ],
       "Checks": [
-        "inspector2_findings_exist"
+        "inspector2_is_enabled"
       ]
     },
     {
-      "Id": "Export scan results as metrics in centralized collector",
+      "Id": "Export scan results as metrics in centralized collector (EC2)",
       "Description": "Export scan results as metrics to a centralized collector.",
       "Attributes": [
         {
@@ -587,7 +643,8 @@
         }
       ],
       "Checks": [
-        "inspector2_findings_exist",
+        "inspector2_active_findings_exist",
+        "inspector2_is_enabled",
         "ecr_registry_scan_images_on_push_enabled",
         "ecr_repositories_scan_vulnerabilities_in_latest_image",
         "ecr_repositories_scan_images_on_push_enabled"
@@ -609,7 +666,7 @@
       ]
     },
     {
-      "Id": "Export scan results as metrics in centralized collector",
+      "Id": "Export scan results as metrics in centralized collector (ECR)",
       "Description": "Generate metric data from scan results and store it in a centralized collector.",
       "Attributes": [
         {
@@ -664,6 +721,14 @@
       ],
       "Checks": [
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -678,6 +743,14 @@
       ],
       "Checks": [
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -692,6 +765,14 @@
       ],
       "Checks": [
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -706,6 +787,14 @@
       ],
       "Checks": [
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -720,6 +809,14 @@
       ],
       "Checks": [
         "securityhub_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "securityhub_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -734,6 +831,14 @@
       ],
       "Checks": [
         "config_recorder_all_regions_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "config_recorder_all_regions_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -760,6 +865,14 @@
       ],
       "Checks": [
         "config_recorder_all_regions_enabled"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "config_recorder_all_regions_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -775,6 +888,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_centrally_managed"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -790,6 +911,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -805,6 +934,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -820,6 +957,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -835,6 +980,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -850,6 +1003,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -865,6 +1026,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -880,6 +1049,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -895,6 +1072,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -910,6 +1095,14 @@
       "Checks": [
         "guardduty_is_enabled",
         "guardduty_no_high_severity_findings"
+      ],
+      "ConfigRequirements": [
+        {
+          "Check": "guardduty_is_enabled",
+          "ConfigKey": "mute_non_default_regions",
+          "Operator": "eq",
+          "Value": false
+        }
       ]
     },
     {
@@ -995,7 +1188,7 @@
       ]
     },
     {
-      "Id": "Export metrics in centralized collector",
+      "Id": "Export metrics in centralized collector (Shield Advanced)",
       "Description": "Exporting metrics to a centralized collector for data aggregation and analysis.",
       "Attributes": [
         {
@@ -1173,7 +1366,7 @@
       "Checks": []
     },
     {
-      "Id": "Export metrics in centralized collector",
+      "Id": "Export metrics in centralized collector (WAFv2)",
       "Description": "Exporting metrics to a centralized collector for comprehensive data aggregation.",
       "Attributes": [
         {

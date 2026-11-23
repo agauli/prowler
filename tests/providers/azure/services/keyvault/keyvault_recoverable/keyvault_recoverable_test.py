@@ -4,7 +4,9 @@ from uuid import uuid4
 from azure.mgmt.keyvault.v2023_07_01.models import SecretAttributes, VaultProperties
 
 from tests.providers.azure.azure_fixtures import (
+    AZURE_SUBSCRIPTION_DISPLAY,
     AZURE_SUBSCRIPTION_ID,
+    AZURE_SUBSCRIPTION_NAME,
     set_mocked_azure_provider,
 )
 
@@ -13,14 +15,18 @@ class Test_keyvault_recoverable:
 
     def test_no_key_vaults(self):
         keyvault_client = mock.MagicMock
+        keyvault_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         keyvault_client.key_vaults = {}
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable.keyvault_client",
-            new=keyvault_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable.keyvault_client",
+                new=keyvault_client,
+            ),
         ):
             from prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable import (
                 keyvault_recoverable,
@@ -32,15 +38,19 @@ class Test_keyvault_recoverable:
 
     def test_key_vaults_no_purge(self):
         keyvault_client = mock.MagicMock
+        keyvault_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         keyvault_name = "Keyvault Name"
         keyvault_id = str(uuid4())
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable.keyvault_client",
-            new=keyvault_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable.keyvault_client",
+                new=keyvault_client,
+            ),
         ):
             from prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable import (
                 keyvault_recoverable,
@@ -74,7 +84,7 @@ class Test_keyvault_recoverable:
             assert result[0].status == "FAIL"
             assert (
                 result[0].status_extended
-                == f"Keyvault {keyvault_name} from subscription {AZURE_SUBSCRIPTION_ID} is not recoverable."
+                == f"Keyvault {keyvault_name} from subscription {AZURE_SUBSCRIPTION_DISPLAY} is not recoverable."
             )
             assert result[0].subscription == AZURE_SUBSCRIPTION_ID
             assert result[0].resource_name == keyvault_name
@@ -83,15 +93,19 @@ class Test_keyvault_recoverable:
 
     def test_key_vaults_no_soft_delete(self):
         keyvault_client = mock.MagicMock
+        keyvault_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         keyvault_name = "Keyvault Name"
         keyvault_id = str(uuid4())
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable.keyvault_client",
-            new=keyvault_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable.keyvault_client",
+                new=keyvault_client,
+            ),
         ):
             from prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable import (
                 keyvault_recoverable,
@@ -140,7 +154,7 @@ class Test_keyvault_recoverable:
             assert result[0].status == "FAIL"
             assert (
                 result[0].status_extended
-                == f"Keyvault {keyvault_name} from subscription {AZURE_SUBSCRIPTION_ID} is not recoverable."
+                == f"Keyvault {keyvault_name} from subscription {AZURE_SUBSCRIPTION_DISPLAY} is not recoverable."
             )
             assert result[0].subscription == AZURE_SUBSCRIPTION_ID
             assert result[0].resource_name == keyvault_name
@@ -149,15 +163,19 @@ class Test_keyvault_recoverable:
 
     def test_key_vaults_valid_configuration(self):
         keyvault_client = mock.MagicMock
+        keyvault_client.subscriptions = {AZURE_SUBSCRIPTION_ID: AZURE_SUBSCRIPTION_NAME}
         keyvault_name = "Keyvault Name"
         keyvault_id = str(uuid4())
 
-        with mock.patch(
-            "prowler.providers.common.provider.Provider.get_global_provider",
-            return_value=set_mocked_azure_provider(),
-        ), mock.patch(
-            "prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable.keyvault_client",
-            new=keyvault_client,
+        with (
+            mock.patch(
+                "prowler.providers.common.provider.Provider.get_global_provider",
+                return_value=set_mocked_azure_provider(),
+            ),
+            mock.patch(
+                "prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable.keyvault_client",
+                new=keyvault_client,
+            ),
         ):
             from prowler.providers.azure.services.keyvault.keyvault_recoverable.keyvault_recoverable import (
                 keyvault_recoverable,
@@ -199,7 +217,7 @@ class Test_keyvault_recoverable:
             assert result[0].status == "PASS"
             assert (
                 result[0].status_extended
-                == f"Keyvault {keyvault_name} from subscription {AZURE_SUBSCRIPTION_ID} is recoverable."
+                == f"Keyvault {keyvault_name} from subscription {AZURE_SUBSCRIPTION_DISPLAY} is recoverable."
             )
             assert result[0].subscription == AZURE_SUBSCRIPTION_ID
             assert result[0].resource_name == keyvault_name

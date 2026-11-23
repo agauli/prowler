@@ -3,27 +3,26 @@ from enum import Enum
 from typing import Optional, Union
 
 from botocore.client import ClientError
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
 
-################## DirectoryService
 class DirectoryService(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
         super().__init__("ds", provider)
         self.directories = {}
-        self.__threading_call__(self.__describe_directories__)
-        self.__threading_call__(self.__list_log_subscriptions__)
-        self.__threading_call__(self.__describe_event_topics__)
-        self.__threading_call__(self.__list_certificates__)
-        self.__threading_call__(self.__get_snapshot_limits__)
-        self.__list_tags_for_resource__()
+        self.__threading_call__(self._describe_directories)
+        self.__threading_call__(self._list_log_subscriptions)
+        self.__threading_call__(self._describe_event_topics)
+        self.__threading_call__(self._list_certificates)
+        self.__threading_call__(self._get_snapshot_limits)
+        self._list_tags_for_resource()
 
-    def __describe_directories__(self, regional_client):
+    def _describe_directories(self, regional_client):
         logger.info("DirectoryService - Describing Directories...")
         try:
             describe_fleets_paginator = regional_client.get_paginator(
@@ -71,7 +70,7 @@ class DirectoryService(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_log_subscriptions__(self, regional_client):
+    def _list_log_subscriptions(self, regional_client):
         logger.info("DirectoryService - Listing Log Subscriptions...")
         try:
             for directory in self.directories.values():
@@ -101,34 +100,58 @@ class DirectoryService(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __describe_event_topics__(self, regional_client):
+    def _describe_event_topics(self, regional_client):
         logger.info("DirectoryService - Describing Event Topics...")
         try:
             for directory in self.directories.values():
                 if directory.region == regional_client.region:
                     # Operation is not supported for Shared MicrosoftAD directories.
                     if directory.type != DirectoryType.SharedMicrosoftAD:
-                        describe_event_topics_parameters = {"DirectoryId": directory.id}
-                        event_topics = []
-                        describe_event_topics = regional_client.describe_event_topics(
-                            **describe_event_topics_parameters
-                        )
-                        for event_topic in describe_event_topics["EventTopics"]:
-                            event_topics.append(
-                                EventTopics(
-                                    topic_arn=event_topic["TopicArn"],
-                                    topic_name=event_topic["TopicName"],
-                                    status=event_topic["Status"],
-                                    created_date_time=event_topic["CreatedDateTime"],
+                        try:
+                            describe_event_topics_parameters = {
+                                "DirectoryId": directory.id
+                            }
+                            event_topics = []
+                            describe_event_topics = (
+                                regional_client.describe_event_topics(
+                                    **describe_event_topics_parameters
                                 )
                             )
-                        self.directories[directory.id].event_topics = event_topics
+                            for event_topic in describe_event_topics["EventTopics"]:
+                                event_topics.append(
+                                    EventTopics(
+                                        topic_arn=event_topic["TopicArn"],
+                                        topic_name=event_topic["TopicName"],
+                                        status=event_topic["Status"],
+                                        created_date_time=event_topic[
+                                            "CreatedDateTime"
+                                        ],
+                                    )
+                                )
+                            self.directories[directory.id].event_topics = event_topics
+                        except ClientError as error:
+                            if (
+                                "is in Deleting state"
+                                in error.response["Error"]["Message"]
+                            ):
+                                logger.warning(
+                                    f"{directory.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                                )
+                            else:
+                                logger.error(
+                                    f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                                )
+                        except Exception as error:
+                            logger.error(
+                                f"{regional_client.region} -- {error.__class__.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                            )
+
         except Exception as error:
             logger.error(
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_certificates__(self, regional_client):
+    def _list_certificates(self, regional_client):
         logger.info("DirectoryService - Listing Certificates...")
         try:
             for directory in self.directories.values():
@@ -178,7 +201,7 @@ class DirectoryService(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __get_snapshot_limits__(self, regional_client):
+    def _get_snapshot_limits(self, regional_client):
         logger.info("DirectoryService - Getting Snapshot Limits...")
         try:
             for directory in self.directories.values():
@@ -203,6 +226,15 @@ class DirectoryService(AWSService):
                                 "SnapshotLimits"
                             ]["ManualSnapshotsLimitReached"],
                         )
+                    except ClientError as error:
+                        if "is in Deleting state" in error.response["Error"]["Message"]:
+                            logger.warning(
+                                f"{directory.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                            )
+                        else:
+                            logger.error(
+                                f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                            )
                     except Exception as error:
                         logger.error(
                             f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
@@ -213,7 +245,7 @@ class DirectoryService(AWSService):
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
-    def __list_tags_for_resource__(self):
+    def _list_tags_for_resource(self):
         logger.info("Directory Service - List Tags...")
         try:
             for directory in self.directories.values():

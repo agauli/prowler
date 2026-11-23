@@ -6,33 +6,84 @@ from prowler.providers.aws.services.cloudwatch.cloudwatch_client import (
     cloudwatch_client,
 )
 from prowler.providers.aws.services.cloudwatch.lib.metric_filters import (
+    build_metric_filter_pattern,
     check_cloudwatch_log_metric_filter,
 )
 from prowler.providers.aws.services.cloudwatch.logs_client import logs_client
 
 
 class cloudwatch_log_metric_filter_policy_changes(Check):
-    def execute(self):
-        pattern = r"\$\.eventName\s*=\s*.?DeleteGroupPolicy.+\$\.eventName\s*=\s*.?DeleteRolePolicy.+\$\.eventName\s*=\s*.?DeleteUserPolicy.+\$\.eventName\s*=\s*.?PutGroupPolicy.+\$\.eventName\s*=\s*.?PutRolePolicy.+\$\.eventName\s*=\s*.?PutUserPolicy.+\$\.eventName\s*=\s*.?CreatePolicy.+\$\.eventName\s*=\s*.?DeletePolicy.+\$\.eventName\s*=\s*.?CreatePolicyVersion.+\$\.eventName\s*=\s*.?DeletePolicyVersion.+\$\.eventName\s*=\s*.?AttachRolePolicy.+\$\.eventName\s*=\s*.?DetachRolePolicy.+\$\.eventName\s*=\s*.?AttachUserPolicy.+\$\.eventName\s*=\s*.?DetachUserPolicy.+\$\.eventName\s*=\s*.?AttachGroupPolicy.+\$\.eventName\s*=\s*.?DetachGroupPolicy.?"
+    """CloudWatch Logs metric filter and alarm exist for IAM policy changes.
+
+    Looks for a CloudWatch Logs metric filter matching the expected pattern on a
+    log group used by a CloudTrail trail, with at least one alarm on its metric.
+
+    - PASS: A matching metric filter with an associated alarm exists.
+    - FAIL: No matching metric filter, or a filter without an alarm, was found.
+    - MANUAL: CloudTrail trails, log groups, metric filters or alarms could
+      not be listed in at least one region, so the absence of a filter/alarm
+      cannot be asserted.
+    """
+
+    def execute(self) -> list[Check_Report_AWS]:
+        """Evaluate the metric filter and alarm coverage for the account.
+
+        Returns:
+            list[Check_Report_AWS]: A single report for the account.
+        """
+        pattern = build_metric_filter_pattern(
+            event_names=[
+                "DeleteGroupPolicy",
+                "DeleteRolePolicy",
+                "DeleteUserPolicy",
+                "PutGroupPolicy",
+                "PutRolePolicy",
+                "PutUserPolicy",
+                "CreatePolicy",
+                "DeletePolicy",
+                "CreatePolicyVersion",
+                "DeletePolicyVersion",
+                "AttachRolePolicy",
+                "DetachRolePolicy",
+                "AttachUserPolicy",
+                "DetachUserPolicy",
+                "AttachGroupPolicy",
+                "DetachGroupPolicy",
+            ],
+        )
         findings = []
-        if (
-            cloudtrail_client.trails is not None
-            and logs_client.metric_filters is not None
-            and cloudwatch_client.metric_alarms is not None
-        ):
-            report = Check_Report_AWS(self.metadata())
+
+        report = check_cloudwatch_log_metric_filter(
+            pattern,
+            cloudtrail_client.trails,
+            logs_client.metric_filters,
+            cloudwatch_client.metric_alarms,
+            self.metadata(),
+        )
+
+        inventory_unavailable = (
+            cloudtrail_client.trails_unavailable
+            or logs_client.log_groups_unavailable
+            or logs_client.metric_filters_unavailable
+            or cloudwatch_client.metric_alarms_unavailable
+        )
+
+        if report is None:
+            report = Check_Report_AWS(metadata=self.metadata(), resource={})
             report.status = "FAIL"
             report.status_extended = "No CloudWatch log groups found with metric filters or alarms associated."
             report.region = logs_client.region
             report.resource_id = logs_client.audited_account
             report.resource_arn = logs_client.log_group_arn_template
-            report = check_cloudwatch_log_metric_filter(
-                pattern,
-                cloudtrail_client.trails,
-                logs_client.metric_filters,
-                cloudwatch_client.metric_alarms,
-                report,
-            )
+            report.resource_tags = []
 
-            findings.append(report)
+        # A denied listing in any region means the inventory is incomplete: a
+        # PASS is still backed by a real filter and alarm, but a FAIL (nothing
+        # found, or a filter found without its alarm) cannot be trusted.
+        if report.status == "FAIL" and inventory_unavailable:
+            report.status = "MANUAL"
+            report.status_extended = "Cannot evaluate CloudWatch metric filters and alarms: CloudTrail trails, log groups, metric filters or alarms could not be listed in at least one region. Verify that the scanning credentials are allowed to call cloudtrail:DescribeTrails, logs:DescribeLogGroups, logs:DescribeMetricFilters and cloudwatch:DescribeAlarms."
+
+        findings.append(report)
+
         return findings

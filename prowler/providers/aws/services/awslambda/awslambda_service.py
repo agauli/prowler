@@ -3,50 +3,75 @@ import json
 import zipfile
 from concurrent.futures import as_completed
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 import requests
 from botocore.client import ClientError
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
+from prowler.lib.resource_limit import (
+    get_resource_scan_limit,
+    limit_resources,
+)
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
+# Presigned code/layer download URLs are short-lived S3 URLs, not AWS API
+# calls, so a hung request here would otherwise block a worker thread
+# indefinitely instead of failing like the surrounding boto3 calls do.
+CODE_DOWNLOAD_TIMEOUT_SECONDS = 30
 
-################## Lambda
+
 class Lambda(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
         super().__init__(__class__.__name__, provider)
+        # Functions are listed first, then trimmed to the subset selected for
+        # analysis before expensive per-function detail is hydrated.
         self.functions = {}
-        self.__threading_call__(self.__list_functions__)
-        self.__list_tags_for_resource__()
-        self.__threading_call__(self.__get_policy__)
-        self.__threading_call__(self.__get_function_url_config__)
+        self.layers = {}
+        self.security_groups_in_use = set()
+        self.regions_with_functions = set()
+        self.function_limit = get_resource_scan_limit(
+            self.audit_config, "max_lambda_functions"
+        )
+        self.__threading_call__(self._list_functions)
+        self._select_functions_for_analysis()
+        self._collect_layers()
+        self._list_tags_for_resource()
+        self.__threading_call__(self._get_policy)
+        self.__threading_call__(self._get_function_url_config)
+        self.__threading_call__(self._list_event_source_mappings)
 
-    def __list_functions__(self, regional_client):
+    def _list_functions(self, regional_client):
         logger.info("Lambda - Listing Functions...")
         try:
             list_functions_paginator = regional_client.get_paginator("list_functions")
             for page in list_functions_paginator.paginate():
-                for function in page["Functions"]:
-                    if not self.audit_resources or (
-                        is_resource_filtered(
-                            function["FunctionArn"], self.audit_resources
-                        )
+                for function in page.get("Functions", []):
+                    if not self.audit_resources or is_resource_filtered(
+                        function["FunctionArn"], self.audit_resources
                     ):
                         lambda_name = function["FunctionName"]
                         lambda_arn = function["FunctionArn"]
+                        vpc_config = function.get("VpcConfig", {})
+                        security_groups = vpc_config.get("SecurityGroupIds", [])
+                        self.security_groups_in_use.update(security_groups)
+                        self.regions_with_functions.add(regional_client.region)
                         # We must use the Lambda ARN as the dict key since we could have Lambdas in different regions with the same name
                         self.functions[lambda_arn] = Function(
                             name=lambda_name,
                             arn=lambda_arn,
-                            security_groups=function.get("VpcConfig", {}).get(
-                                "SecurityGroupIds", []
-                            ),
+                            security_groups=security_groups,
+                            vpc_id=vpc_config.get("VpcId"),
+                            subnet_ids=set(vpc_config.get("SubnetIds", [])),
                             region=regional_client.region,
                         )
+                        if "LastModified" in function:
+                            self.functions[lambda_arn].last_modified = function[
+                                "LastModified"
+                            ]
                         if "Runtime" in function:
                             self.functions[lambda_arn].runtime = function["Runtime"]
                         if "Environment" in function:
@@ -54,6 +79,19 @@ class Lambda(AWSService):
                                 "Variables"
                             )
                             self.functions[lambda_arn].environment = lambda_environment
+                        if "KMSKeyArn" in function:
+                            self.functions[lambda_arn].kms_key_arn = function[
+                                "KMSKeyArn"
+                            ]
+                        if "Layers" in function:
+                            self.functions[lambda_arn].layers = [
+                                Layer(arn=layer["Arn"]) for layer in function["Layers"]
+                            ]
+                        dlq_arn = function.get("DeadLetterConfig", {}).get("TargetArn")
+                        if dlq_arn:
+                            self.functions[lambda_arn].dead_letter_config = (
+                                DeadLetterConfig(target_arn=dlq_arn)
+                            )
 
         except Exception as error:
             logger.error(
@@ -62,12 +100,96 @@ class Lambda(AWSService):
                 f" {error}"
             )
 
-    def __get_function_code__(self):
+    def _select_functions_for_analysis(self):
+        self.functions = {
+            function.arn: function
+            for function in limit_resources(
+                sorted(
+                    self.functions.values(),
+                    key=lambda f: f.last_modified or "",
+                    reverse=True,
+                ),
+                self.function_limit,
+            )
+        }
+
+    def _collect_layers(self):
+        for function in self.functions.values():
+            for layer in function.layers:
+                self.layers.setdefault(layer.arn, layer)
+
+    def _list_event_source_mappings(self, regional_client):
+        logger.info("Lambda - Listing Event Source Mappings...")
+        try:
+            paginator = regional_client.get_paginator("list_event_source_mappings")
+            if not self.function_limit:
+                for page in paginator.paginate():
+                    self._add_event_source_mappings(page.get("EventSourceMappings", []))
+                return
+
+            for function in self.functions.values():
+                if function.region != regional_client.region:
+                    continue
+                try:
+                    for page in paginator.paginate(FunctionName=function.name):
+                        self._add_event_source_mappings(
+                            page.get("EventSourceMappings", [])
+                        )
+                except ClientError as error:
+                    if (
+                        error.response.get("Error", {}).get("Code")
+                        == "InvalidParameterValueException"
+                    ):
+                        logger.warning(
+                            f"{function.region} --"
+                            f" {error.__class__.__name__}[{error.__traceback__.tb_lineno}]:"
+                            f" {error}"
+                        )
+                    else:
+                        logger.error(
+                            f"{function.region} --"
+                            f" {error.__class__.__name__}[{error.__traceback__.tb_lineno}]:"
+                            f" {error}"
+                        )
+                        raise
+        except ClientError as error:
+            if self.function_limit:
+                raise
+            logger.error(
+                f"{regional_client.region} --"
+                f" {error.__class__.__name__}[{error.__traceback__.tb_lineno}]:"
+                f" {error}"
+            )
+        except Exception as error:
+            logger.error(
+                f"{regional_client.region} --"
+                f" {error.__class__.__name__}[{error.__traceback__.tb_lineno}]:"
+                f" {error}"
+            )
+
+    def _add_event_source_mappings(self, event_source_mappings):
+        for mapping in event_source_mappings:
+            function_arn = mapping.get("FunctionArn", "")
+            # Normalise to unqualified ARN (strip :qualifier suffix if present)
+            base_arn = ":".join(function_arn.split(":")[:7])
+            if base_arn not in self.functions:
+                continue
+            self.functions[base_arn].event_source_mappings.append(
+                EventSourceMapping(
+                    uuid=mapping["UUID"],
+                    event_source_arn=mapping.get("EventSourceArn", ""),
+                    state=mapping.get("State", ""),
+                    batch_size=mapping.get("BatchSize"),
+                    starting_position=mapping.get("StartingPosition"),
+                )
+            )
+
+    def _get_function_code(self):
         logger.info("Lambda - Getting Function Code...")
-        # Use a thread pool handle the queueing and execution of the __fetch_function_code__ tasks, up to max_workers tasks concurrently.
+        # Use a thread pool handle the queueing and execution of the _fetch_function_code tasks, up to max_workers tasks concurrently.
         lambda_functions_to_fetch = {
             self.thread_pool.submit(
-                self.__fetch_function_code__, function.name, function.region
+                self._fetch_function_code, function.name, function.region
             ): function
             for function in self.functions.values()
         }
@@ -83,26 +205,69 @@ class Lambda(AWSService):
                     f"{function.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
                 )
 
-    def __fetch_function_code__(self, function_name, function_region):
+    def _download_code(self, code_location_uri):
+        raw_code_zip = requests.get(
+            code_location_uri, timeout=CODE_DOWNLOAD_TIMEOUT_SECONDS
+        ).content
+        return LambdaCode(
+            location=code_location_uri,
+            code_zip=zipfile.ZipFile(io.BytesIO(raw_code_zip)),
+        )
+
+    def _fetch_function_code(self, function_name, function_region):
         try:
             regional_client = self.regional_clients[function_region]
             function_information = regional_client.get_function(
                 FunctionName=function_name
             )
             if "Location" in function_information["Code"]:
-                code_location_uri = function_information["Code"]["Location"]
-                raw_code_zip = requests.get(code_location_uri).content
-                return LambdaCode(
-                    location=code_location_uri,
-                    code_zip=zipfile.ZipFile(io.BytesIO(raw_code_zip)),
-                )
+                return self._download_code(function_information["Code"]["Location"])
         except Exception as error:
             logger.error(
                 f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
             raise
 
-    def __get_policy__(self, regional_client):
+    def _get_layers_code(self):
+        logger.info("Lambda - Getting Layer Code...")
+        # Use a thread pool to handle the queueing and execution of the
+        # _fetch_layer_code tasks, up to max_workers tasks concurrently.
+        layers_to_fetch = {
+            self.thread_pool.submit(
+                self._fetch_layer_code, layer.arn, layer.region
+            ): layer
+            for layer in self.layers.values()
+        }
+
+        for fetched_layer_code in as_completed(layers_to_fetch):
+            layer = layers_to_fetch[fetched_layer_code]
+            try:
+                layer_code = fetched_layer_code.result()
+                if layer_code:
+                    yield layer, layer_code
+            except Exception as error:
+                logger.error(
+                    f"{layer.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+
+    def _fetch_layer_code(self, layer_arn, layer_region):
+        try:
+            regional_client = self.regional_clients[layer_region]
+            # Fetch by the full layer-version ARN: layers attached to a
+            # function may be owned by another account (e.g. vendor or
+            # AWS-provided layers), where a bare layer name would resolve
+            # against the audited account instead.
+            layer_version = regional_client.get_layer_version_by_arn(Arn=layer_arn)
+            if "Location" in (layer_version.get("Content") or {}):
+                return self._download_code(layer_version["Content"]["Location"])
+            return None
+        except Exception as error:
+            logger.error(
+                f"{layer_region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+            )
+            raise
+
+    def _get_policy(self, regional_client):
         logger.info("Lambda - Getting Policy...")
         try:
             for function in self.functions.values():
@@ -117,7 +282,6 @@ class Lambda(AWSService):
                     except ClientError as e:
                         if e.response["Error"]["Code"] == "ResourceNotFoundException":
                             self.functions[function.arn].policy = {}
-
         except Exception as error:
             logger.error(
                 f"{regional_client.region} --"
@@ -125,7 +289,7 @@ class Lambda(AWSService):
                 f" {error}"
             )
 
-    def __get_function_url_config__(self, regional_client):
+    def _get_function_url_config(self, regional_client):
         logger.info("Lambda - Getting Function URL Config...")
         try:
             for function in self.functions.values():
@@ -146,7 +310,6 @@ class Lambda(AWSService):
                     except ClientError as e:
                         if e.response["Error"]["Code"] == "ResourceNotFoundException":
                             self.functions[function.arn].url_config = None
-
         except Exception as error:
             logger.error(
                 f"{regional_client.region} --"
@@ -154,7 +317,7 @@ class Lambda(AWSService):
                 f" {error}"
             )
 
-    def __list_tags_for_resource__(self):
+    def _list_tags_for_resource(self):
         logger.info("Lambda - List Tags...")
         try:
             for function in self.functions.values():
@@ -165,10 +328,9 @@ class Lambda(AWSService):
                 except ClientError as e:
                     if e.response["Error"]["Code"] == "ResourceNotFoundException":
                         function.tags = []
-
         except Exception as error:
             logger.error(
-                f"{regional_client.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                f"{function.region} -- {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
             )
 
 
@@ -192,14 +354,66 @@ class URLConfig(BaseModel):
     cors_config: URLConfigCORS
 
 
+class Layer(BaseModel):
+    arn: str
+
+    @property
+    def account_id(self) -> str:
+        """Extract the account ID from the layer ARN."""
+        parts = self.arn.split(":")
+        return parts[4] if len(parts) >= 5 else ""
+
+    @property
+    def region(self) -> str:
+        """Extract the region from the layer ARN.
+
+        A layer can only be attached to a function in the same region, so
+        this is always one of the regions already being audited.
+        """
+        parts = self.arn.split(":")
+        return parts[3] if len(parts) >= 4 else ""
+
+    @property
+    def name(self) -> str:
+        """Extract the layer name from the ARN."""
+        parts = self.arn.split(":")
+        return parts[6] if len(parts) >= 7 else self.arn
+
+    @property
+    def version(self) -> str:
+        """Extract the layer version from the ARN."""
+        parts = self.arn.split(":")
+        return parts[7] if len(parts) >= 8 else ""
+
+
+class DeadLetterConfig(BaseModel):
+    target_arn: str
+
+
+class EventSourceMapping(BaseModel):
+    uuid: str
+    event_source_arn: str
+    state: str
+    batch_size: Optional[int] = None
+    starting_position: Optional[str] = None
+
+
 class Function(BaseModel):
     name: str
     arn: str
     security_groups: list
-    runtime: Optional[str]
-    environment: dict = None
+    last_modified: Optional[str] = None
+    runtime: Optional[str] = None
+    sensitive_fields: ClassVar[tuple[str, ...]] = ("environment",)
+    environment: Optional[dict] = None
     region: str
-    policy: dict = None
+    policy: dict = {}
     code: LambdaCode = None
     url_config: URLConfig = None
+    vpc_id: Optional[str] = None
+    subnet_ids: Optional[set] = None
+    kms_key_arn: Optional[str] = None
+    layers: list[Layer] = []
+    dead_letter_config: Optional[DeadLetterConfig] = None
+    event_source_mappings: list[EventSourceMapping] = []
     tags: Optional[list] = []

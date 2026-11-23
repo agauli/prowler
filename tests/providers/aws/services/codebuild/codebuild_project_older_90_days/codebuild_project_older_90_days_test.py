@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-from re import search
 from unittest import mock
 
 from prowler.providers.aws.services.codebuild.codebuild_service import Project
@@ -20,12 +19,19 @@ class Test_codebuild_project_older_90_days:
                 region="eu-west-1",
                 last_invoked_time=datetime.now(timezone.utc) - timedelta(days=100),
                 buildspec=None,
+                tags=[],
             )
         }
 
-        with mock.patch(
-            "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
-            codebuild_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
+                codebuild_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_project_older_90_days.codebuild_project_older_90_days.codebuild_client",
+                codebuild_client,
+            ),
         ):
             from prowler.providers.aws.services.codebuild.codebuild_project_older_90_days.codebuild_project_older_90_days import (
                 codebuild_project_older_90_days,
@@ -36,8 +42,9 @@ class Test_codebuild_project_older_90_days:
 
             assert len(result) == 1
             assert result[0].status == "FAIL"
-            assert search(
-                "has not been invoked in the last 90 days", result[0].status_extended
+            assert (
+                result[0].status_extended
+                == f"CodeBuild project {project_name} has not been invoked in the last 90 days."
             )
             assert result[0].resource_id == project_name
             assert result[0].resource_arn == project_arn
@@ -55,12 +62,19 @@ class Test_codebuild_project_older_90_days:
                 region="eu-west-1",
                 last_invoked_time=None,
                 buildspec=None,
+                tags=[],
             )
         }
 
-        with mock.patch(
-            "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
-            codebuild_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
+                codebuild_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_project_older_90_days.codebuild_project_older_90_days.codebuild_client",
+                codebuild_client,
+            ),
         ):
             from prowler.providers.aws.services.codebuild.codebuild_project_older_90_days.codebuild_project_older_90_days import (
                 codebuild_project_older_90_days,
@@ -71,7 +85,10 @@ class Test_codebuild_project_older_90_days:
 
             assert len(result) == 1
             assert result[0].status == "FAIL"
-            assert search("has never been built", result[0].status_extended)
+            assert (
+                result[0].status_extended
+                == f"CodeBuild project {project_name} has never been built."
+            )
             assert result[0].resource_id == project_name
             assert result[0].resource_arn == project_arn
             assert result[0].resource_tags == []
@@ -88,12 +105,19 @@ class Test_codebuild_project_older_90_days:
                 region="eu-west-1",
                 last_invoked_time=datetime.now(timezone.utc) - timedelta(days=10),
                 buildspec=None,
+                tags=[],
             )
         }
 
-        with mock.patch(
-            "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
-            codebuild_client,
+        with (
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_service.Codebuild",
+                codebuild_client,
+            ),
+            mock.patch(
+                "prowler.providers.aws.services.codebuild.codebuild_project_older_90_days.codebuild_project_older_90_days.codebuild_client",
+                codebuild_client,
+            ),
         ):
             from prowler.providers.aws.services.codebuild.codebuild_project_older_90_days.codebuild_project_older_90_days import (
                 codebuild_project_older_90_days,
@@ -104,8 +128,9 @@ class Test_codebuild_project_older_90_days:
 
             assert len(result) == 1
             assert result[0].status == "PASS"
-            assert search(
-                "has been invoked in the last 90 days", result[0].status_extended
+            assert (
+                result[0].status_extended
+                == f"CodeBuild project {project_name} has been invoked in the last 90 days."
             )
             assert result[0].resource_id == project_name
             assert result[0].resource_arn == project_arn

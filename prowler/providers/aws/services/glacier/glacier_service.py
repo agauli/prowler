@@ -2,24 +2,23 @@ import json
 from typing import Optional
 
 from botocore.client import ClientError
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel
 
 from prowler.lib.logger import logger
 from prowler.lib.scan_filters.scan_filters import is_resource_filtered
 from prowler.providers.aws.lib.service.service import AWSService
 
 
-################## Glacier
 class Glacier(AWSService):
     def __init__(self, provider):
         # Call AWSService's __init__
         super().__init__(__class__.__name__, provider)
         self.vaults = {}
-        self.__threading_call__(self.__list_vaults__)
-        self.__threading_call__(self.__get_vault_access_policy__)
-        self.__list_tags_for_vault__()
+        self.__threading_call__(self._list_vaults)
+        self.__threading_call__(self._get_vault_access_policy)
+        self._list_tags_for_vault()
 
-    def __list_vaults__(self, regional_client):
+    def _list_vaults(self, regional_client):
         logger.info("Glacier - Listing Vaults...")
         try:
             list_vaults_paginator = regional_client.get_paginator("list_vaults")
@@ -44,7 +43,7 @@ class Glacier(AWSService):
                 f" {error}"
             )
 
-    def __get_vault_access_policy__(self, regional_client):
+    def _get_vault_access_policy(self, regional_client):
         logger.info("Glacier - Getting Vault Access Policy...")
         try:
             for vault in self.vaults.values():
@@ -66,7 +65,7 @@ class Glacier(AWSService):
                 f" {error}"
             )
 
-    def __list_tags_for_vault__(self):
+    def _list_tags_for_vault(self):
         logger.info("Glacier - List Tags...")
         try:
             for vault in self.vaults.values():

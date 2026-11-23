@@ -6,10 +6,14 @@ class dns_dnssec_disabled(Check):
     def execute(self) -> Check_Report_GCP:
         findings = []
         for managed_zone in dns_client.managed_zones:
-            report = Check_Report_GCP(self.metadata())
-            report.project_id = managed_zone.project_id
-            report.resource_id = managed_zone.id
-            report.resource_name = managed_zone.name
+            # Cloud DNS signs public zones only; a private zone cannot enable DNSSEC.
+            if managed_zone.visibility != "public":
+                continue
+            report = Check_Report_GCP(
+                metadata=self.metadata(),
+                resource=managed_zone,
+                location=dns_client.region,
+            )
             report.status = "PASS"
             report.status_extended = (
                 f"Cloud DNS {managed_zone.name} has DNSSEC enabled."

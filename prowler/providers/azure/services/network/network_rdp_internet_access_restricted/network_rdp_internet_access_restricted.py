@@ -1,28 +1,26 @@
 from prowler.lib.check.models import Check, Check_Report_Azure
 from prowler.providers.azure.services.network.network_client import network_client
+from prowler.providers.azure.services.network.network_service import (
+    security_rule_exposes_port,
+)
 
 
 class network_rdp_internet_access_restricted(Check):
     def execute(self) -> Check_Report_Azure:
         findings = []
         for subscription, security_groups in network_client.security_groups.items():
+            subscription_name = network_client.subscriptions.get(
+                subscription, subscription
+            )
             for security_group in security_groups:
-                report = Check_Report_Azure(self.metadata())
+                report = Check_Report_Azure(
+                    metadata=self.metadata(), resource=security_group
+                )
                 report.subscription = subscription
-                report.resource_name = security_group.name
-                report.resource_id = security_group.id
                 report.status = "PASS"
-                report.location = security_group.location
-                report.status_extended = f"Security Group {security_group.name} from subscription {subscription} has RDP internet access restricted."
+                report.status_extended = f"Security Group {security_group.name} from subscription {subscription_name} ({subscription}) has RDP internet access restricted."
                 rule_fail_condition = any(
-                    (
-                        rule.destination_port_range == "3389"
-                        or (
-                            "-" in rule.destination_port_range
-                            and int(rule.destination_port_range.split("-")[0]) <= 3389
-                            and int(rule.destination_port_range.split("-")[1]) >= 3389
-                        )
-                    )
+                    security_rule_exposes_port(rule, 3389)
                     and rule.protocol in ["TCP", "Tcp", "*"]
                     and rule.source_address_prefix in ["Internet", "*", "0.0.0.0/0"]
                     and rule.access == "Allow"
@@ -31,7 +29,7 @@ class network_rdp_internet_access_restricted(Check):
                 )
                 if rule_fail_condition:
                     report.status = "FAIL"
-                    report.status_extended = f"Security Group {security_group.name} from subscription {subscription} has RDP internet access allowed."
+                    report.status_extended = f"Security Group {security_group.name} from subscription {subscription_name} ({subscription}) has RDP internet access allowed."
                 findings.append(report)
 
         return findings
